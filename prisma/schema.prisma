@@ -1,0 +1,98 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RewardBatchStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  PARTIAL_FAILED
+  FAILED
+}
+
+enum RewardRecordStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  ROLLED_BACK
+}
+
+enum LedgerType {
+  REWARD
+  ROLLBACK
+}
+
+model RewardBatch {
+  id          String            @id @default(uuid())
+  period      String            @unique // e.g. 2026-Q1
+  startDate   DateTime
+  endDate     DateTime
+  status      RewardBatchStatus @default(PENDING)
+  rewardRate  Decimal           @db.Decimal(8, 6)
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  records     RewardRecord[]
+
+  @@index([status, createdAt])
+}
+
+model RewardRecord {
+  id               String             @id @default(uuid())
+  batchId          String
+  userId           String
+  totalOrderAmount Decimal            @db.Decimal(18, 2)
+  rewardAmount     Decimal            @db.Decimal(18, 2)
+  status           RewardRecordStatus @default(PENDING)
+  attemptCount     Int                @default(0)
+  lastError        String?
+  nextRetryAt      DateTime?
+  processedAt      DateTime?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  batch            RewardBatch        @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  ledgers          BeansLedger[]
+
+  @@unique([batchId, userId])
+  @@index([status, nextRetryAt])
+}
+
+model BeansLedger {
+  id             String     @id @default(uuid())
+  userId         String
+  rewardRecordId String?
+  changeAmount   Decimal    @db.Decimal(18, 2) // positive for reward, negative for rollback
+  type           LedgerType
+  referenceId    String     // batchId:recordId or rollbackJobId
+  idempotencyKey String     @unique
+  externalTxnId  String?
+  metadata       Json?
+  createdAt      DateTime   @default(now())
+
+  rewardRecord   RewardRecord? @relation(fields: [rewardRecordId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt])
+  @@index([referenceId, type])
+}
+
+model OrderSnapshot {
+  id           String   @id @default(uuid())
+  batchId      String
+  externalId   String
+  customerId   String
+  orderAmount  Decimal  @db.Decimal(18, 2)
+  orderCreated DateTime
+  rawPayload   Json
+  createdAt    DateTime @default(now())
+
+  @@index([batchId, customerId])
+  @@unique([batchId, externalId])
+}
