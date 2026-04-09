@@ -1,9 +1,9 @@
-﻿import { Module } from '@nestjs/common';
-import { HttpModule } from '@nestjs/axios';
+import { Module } from '@nestjs/common';
+import { BigcommerceModule } from '../bigcommerce/bigcommerce.module';
 import { OrderService } from './order.service';
 
 @Module({
-  imports: [HttpModule],
+  imports: [BigcommerceModule],
   providers: [OrderService],
   exports: [OrderService],
 })

@@ -1,6 +1,6 @@
-import { HttpService } from '@nestjs/axios';
 import { Injectable, Logger } from '@nestjs/common';
 import Decimal from 'decimal.js';
+import { BigcommerceService } from '../bigcommerce/bigcommerce.service';
 import { OrderSnapshot } from './types/order-snapshot.type';
 
 export type UserOrderAggregate = {
@@ -27,8 +27,9 @@ export function aggregateSnapshotsByUser(
 @Injectable()
 export class OrderService {
   private readonly logger = new Logger(OrderService.name);
+  private static readonly ORDER_PAGE_SIZE = 250;
 
-  constructor(private readonly http: HttpService) {}
+  constructor(private readonly bigcommerce: BigcommerceService) {}
 
   async fetchAndAggregateUserOrders(
     startDate: Date,
@@ -38,14 +39,32 @@ export class OrderService {
       `Fetch BigCommerce orders from ${startDate.toISOString()} to ${endDate.toISOString()}`,
     );
 
-    // Placeholder:
-    // 1. Pull paginated orders from BigCommerce API
-    // 2. Filter paid/completed orders
-    // 3. Aggregate by customer/user id
-    const snapshots: OrderSnapshot[] = [
-      { userId: '1001', totalAmount: new Decimal('1250.00') },
-      { userId: '1002', totalAmount: new Decimal('480.25') },
-    ];
+    const snapshots: OrderSnapshot[] = [];
+    let page = 1;
+    let hasNextPage = true;
+
+    while (hasNextPage) {
+      const response = await this.bigcommerce.listOrdersByDateRange({
+        startDate,
+        endDate,
+        page,
+        limit: OrderService.ORDER_PAGE_SIZE,
+      });
+
+      for (const order of response.orders) {
+        if (order.customer_id === null) {
+          continue;
+        }
+
+        snapshots.push({
+          userId: String(order.customer_id),
+          totalAmount: new Decimal(order.total_inc_tax),
+        });
+      }
+
+      hasNextPage = response.hasNextPage;
+      page += 1;
+    }
 
     return aggregateSnapshotsByUser(snapshots);
   }

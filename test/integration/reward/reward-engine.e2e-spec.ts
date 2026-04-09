@@ -2,6 +2,10 @@ import { Prisma } from '@prisma/client';
 import { ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
+import { AppModule } from '../../../src/app.module';
+import { BigcommerceModule } from '../../../src/modules/bigcommerce/bigcommerce.module';
+import { BigcommerceService } from '../../../src/modules/bigcommerce/bigcommerce.service';
+import { OrderService } from '../../../src/modules/order/order.service';
 import { RewardController } from '../../../src/modules/reward/reward.controller';
 import { RewardService } from '../../../src/modules/reward/reward.service';
 
@@ -131,5 +135,21 @@ describe('RewardController routes', () => {
       endDate: new Date('2026-03-31T23:59:59.000Z'),
       rewardRate: '0.05',
     });
+  });
+});
+
+describe('App module wiring', () => {
+  it('should register BigcommerceModule and resolve OrderService/BigcommerceService', async () => {
+    const imports = Reflect.getMetadata('imports', AppModule) as unknown[];
+    expect(imports).toContain(BigcommerceModule);
+
+    const moduleRef = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+
+    expect(moduleRef.get(OrderService)).toBeDefined();
+    expect(moduleRef.get(BigcommerceService)).toBeDefined();
+
+    await moduleRef.close();
   });
 });
