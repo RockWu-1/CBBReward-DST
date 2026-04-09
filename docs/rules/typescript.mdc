@@ -1,0 +1,54 @@
+---
+alwaysApply: true
+---
+
+# 前端 JavaScript / TypeScript 规范（JS/TS Rules）
+
+## 0. 总体原则
+
+- 统一遵循 **驼峰命名（camelCase）** 风格
+- 类型、接口、枚举使用 **PascalCase**
+- 常量、枚举值使用 **全大写加下划线（UPPER_SNAKE_CASE）**
+- 保持代码可读、可维护、可复用
+- 严格区分类型、值、常量和函数命名
+
+---
+
+## 1. 命名规范
+
+### 1.1 变量与函数
+
+- 使用 **camelCase**
+- 不允许使用下划线开头（\_private 除外）
+- 示例：
+
+```ts
+const userName = 'Alice';
+let currentPage = 1;
+
+function fetchData() {}
+const calculateTotal = () => {};
+```
+
+### 1.2 类型、接口、类
+
+- 使用 PascalCase
+- 类型前缀 I 表示接口, 用XXX_TYPE表示常量类型
+
+示例：
+
+```ts
+interface ILoginRequestType {
+  email: string;
+  password: string;
+}
+
+type IPagination = {
+  current: number;
+  limit: number;
+  offset: number;
+  totalCount: number;
+};
+
+type ROLE_TYPE = (typeof ROLE)[keyof typeof ROLE];
+```

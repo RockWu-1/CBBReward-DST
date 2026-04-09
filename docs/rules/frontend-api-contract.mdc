@@ -1,0 +1,108 @@
+---
+alwaysApply: true
+---
+
+# 前端调用后端 API 规则（Rules）
+
+## 0. 总原则
+
+1. 每个接口 **必须定义 Request 与 Response 类型**：
+   - Request 类型命名：`I<接口名>RequestType`
+   - Response 类型命名：`I<接口名>ResponseType`
+2. 类型必须在 `@shoplineplugin/shared` 中定义，不允许在业务层复制或修改
+3. 所有 HTTP 请求必须使用 `useHttp` Hook
+4. 不允许直接使用 axios 或其他 HTTP 库调用接口
+5. 所有返回值必须严格匹配 shared 类型，前端不得假设额外字段
+
+---
+
+## 1. 类型约定
+
+- 所有接口类型统一放在 `shared/types` 下
+- 通用分页类型必须使用 `IPaginationType`
+- 常量、枚举统一使用 `shared/constants` 中定义的 ROLE、PERMISSION 等
+- 所有`GET`接口不需要设置`showLoading: true`
+
+示例：
+
+```ts
+export type ILoginRequestType = {
+  email: string;
+  password: string;
+};
+
+export type ILoginResponseType = {
+  accessToken: string;
+  refreshToken: string;
+  user: {
+    name: string;
+    email: string;
+  };
+};
+```
+
+## 2. Hook 调用规范
+
+- 所有接口必须通过 useHttp<T>() 调用
+
+- 泛型 T 必须包含：
+
+```ts
+type T = {
+  request: 对应 Request 类型;
+  response: 对应 Response 类型;
+}
+```
+
+## Hook 命名规则：
+
+1. use<功能名>，例如 useLogin, useAuth
+
+2. Request / Response 类型必须从 shared 导入
+
+3. success 与 error 配置可选，但必须使用 hook 内置 message 或 action，不允许在外部处理逻辑
+
+## 3. 分页接口规则
+
+- 接口返回包含分页信息时，Response 中必须包含：
+
+```ts
+meta: {
+  pagination: IPaginationType;
+}
+```
+
+- useHttp 会自动解析 pagination 并返回 state.pagination
+
+state.pagination 默认值：
+
+```ts
+{
+  totalCount: 0,
+  offset: 0,
+  limit: 0,
+  current: 0,
+}
+```
+
+## 4. 错误处理规则
+
+- 使用 useHttp 内置 handleHttpError
+- 可通过 hook 配置 error.message 或 error.action 自定义错误行为
+- 不允许在业务层直接捕获或处理 axios 错误
+
+## 5. 命名与导出规则
+
+- Request / Response 类型必须以 IxxxRequestType / IxxxResponseType 命名
+- Hook 命名必须以 use 开头
+- 所有类型与常量必须命名导出，禁止 default export
+- 禁止直接 import shared 子路径，必须通过包入口
+
+## 6. AI 行为约束（最高优先级）
+
+- 不允许生成未定义 request/response 类型的接口
+- 不允许在业务层自行定义类型或绕过 shared
+- 不允许修改 shared 类型或 constants 来适配生成代码
+- 不允许使用非命名导出、直接 import 子路径或引入 runtime 依赖
+
+违反任意规则即视为错误实现。

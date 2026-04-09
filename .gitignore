@@ -24,4 +24,5 @@ lerna-debug.log*
 .tmp
 
 # ai docs
-/docs
+/docs/apis
+/docs/backend_designs

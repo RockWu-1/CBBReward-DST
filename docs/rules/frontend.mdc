@@ -1,0 +1,19 @@
+---
+alwaysApply: true
+---
+
+## 2. 组件命名
+
+- 组件名使用驼峰命名法，如 `ProductList`
+- 组件文件名使用 `index.tsx`
+- 组件名使用驼峰命名法，如 `List`
+- 在创建一个新组件时，请确保在 `components` 文件夹中创建一个对应的文件夹，并在其中创建 `index.tsx` 文件
+
+## 3. 请求
+
+- 请求统一放在 `services` 文件夹中
+- 禁止使用axios直接请求，必须使用useHttp封装到services中
+
+## 4. 消息提示
+
+- 使用 `useMessage` 自定义 Hook，在组件中调用 `useMessage` 来显示消息提示

@@ -1,0 +1,122 @@
+---
+alwaysApply: true
+---
+
+# 后端 TypeScript / NestJS 规范（Backend Rules）
+
+## 0. 总体原则
+
+- 统一使用 **TypeScript**，严格类型约束
+- 所有 API 返回值必须符合 shared/types 定义
+- 所有接口必须严格区分 **Request / Response**
+- 所有错误必须通过统一机制处理（BadRequestException 或自定义统一异常）
+- 不允许返回未声明字段或假定字段
+- 项目采用 **模块化 + Monorepo** 架构，模块内聚，模块间解耦
+
+---
+
+## 1. DTO / 类型规范
+
+- 所有接口 **Request / Response** 类型必须直接使用 `shared` 中的 `IRequestType` / `IResponseType`
+- DTO 类仅用于 **class-validator / NestJS DTO 约束**，内部字段必须映射 shared 类型
+- DTO 命名规则：
+  - Request 类：`{接口名}RequestDto`
+  - Response 类：`{接口名}ResponseDto`
+- 禁止在后端 DTO 中定义 shared 未声明的字段
+- 示例：
+
+```ts
+// shared/types/auth.ts
+export type ILoginRequestType = {
+  email: string;
+  password: string;
+};
+
+// auth/dto/login.dto.ts
+import { IsEmail, IsString } from 'class-validator';
+import type { ILoginRequestType } from '@shoplineplugin/shared';
+
+export class LoginRequestDto implements ILoginRequestType {
+  @IsEmail()
+  email: string;
+
+  @IsString()
+  password: string;
+}
+```
+
+### 1.1 列表 Query DTO 统一写法（参考 `GetGorgiasAppsRequestDto`）
+
+- **请求类型在 shared 定义**：如 `IGetXxxRequestType = IFilterType & { type?: string; ... }`
+- **DTO 必须 `implements IGetXxxRequestType`**，字段与 shared 对齐，不得新增字段。
+- **示例：**
+
+```ts
+// shared/types/xxx.ts
+export type INameRequestType = IFilterType & {
+  type: string
+};
+
+// api/src/core/gorgias-apps/dto/get-gorgias-apps-request.dto.ts
+import { IsOptional, IsString } from 'class-validator';
+import type { IGetGorgiasAppsRequestType } from '@shoplineplugin/shared';
+import { IntersectionType } from '@nestjs/swagger';
+import { FilterDto } from '@/common';
+
+class BasicGorgiasDto {
+  @IsString()
+  type: string;
+}
+
+export class GetGorgiasAppsDto
+  extends IntersectionType(FilterDto, BasicGorgiasDto)
+  implements IGetGorgiasAppsRequestType {}
+```
+
+> 所有列表类接口的 Query DTO，都必须遵循这一写法：**shared 先定义Basic类型 -> DTO extends IntersectionType(FilterDto, Basic类型) -> DTO implements 该类型**
+
+## 2. Controller / Service 规则
+
+- Controller 仅负责路由、参数验证、权限校验
+- Service 仅负责业务逻辑、数据库操作
+- Controller / Service 所有输入输出类型必须 直接依赖 shared 类型
+- 禁止 Controller / Service 内定义未声明字段或复制 shared 类型
+
+## 3. 分页 / 列表接口规则
+
+- 所有分页接口 Response 必须包含：
+  - `data`：分页数据数组
+  - `meta`：分页元数据，包含 `pagination` 信息
+
+```ts
+{
+  data: T[];
+  meta: { pagination: IPaginationType };
+}
+```
+
+- 分页参数和返回类型必须依赖 shared/types/common/paginations.ts
+- Service 内必须处理 offset / limit / totalCount
+
+## 4. 命名规则
+
+- 变量 / 函数：camelCase
+- DTO / 类型 / 类：PascalCase
+- 常量 / 枚举值：UPPER_SNAKE_CASE （需放至shared目录）
+- Service 方法命名由名词开头，如 users, orders
+- Controller 路由保持 REST 风格：GET /products, POST /auth/login
+
+## 5. AI / 自动生成约束
+
+- 不允许生成未定义 shared 类型的 Request / Response
+- 不允许绕过 shared 在 DTO 或 Response 中新增字段
+- 不允许修改 shared 类型以适配生成逻辑
+- 禁止在 Controller / Service 内写副作用或 IO，除非通过统一模块
+
+## 6. env
+
+- 所有环境变量必须从 `getEnv` 获取
+- 不允许直接在代码中写死环境变量
+- 所有环境变量必须在 `api/utils/env` 中定义
+
+违反以上任意条目即视为错误实现。

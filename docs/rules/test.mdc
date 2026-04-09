@@ -1,0 +1,211 @@
+---
+alwaysApply: true
+---
+
+# 测试规范（Testing Rules）v2
+
+> **依据**：`docs/Automated Testing Methodology (AI-Assisted).md` 与 superpowers-workflow  
+> **技术栈**：前端 React（Jest + RTL + MSW + Playwright），后端 NestJS + Prisma + PostgreSQL（Jest + Supertest + golevelup/nestjs-testing）
+
+---
+
+## 0. 总原则
+
+- **金字塔分层**：单元测试最多、执行最快；集成测试适中；E2E 浏览器测试最少、仅覆盖关键用户路径。严格控制反馈时间与维护成本。
+- **TDD（铁律）**：
+  - 新功能、修 Bug、重构前，**必须先写失败测试**；
+  - 再写**最少实现**使测试通过；
+  - 最后**重构**（不得改变测试行为）。
+  - **未经用户明确同意，禁止在无测试的情况下提交生产代码**。
+  - **修 Bug 必须先有能复现问题的失败测试**，再修改根因。
+- **E2E 工具**：采用 **Playwright**，默认 headless；调试使用 `--headed` 或 `--debug`，**禁止复用已有浏览器窗口**（如 connectOverCDP）。
+- **契约一致性**：所有断言必须与 **`@your-org/shared` 中声明的 API Contract / 类型** 一致，**禁止依赖未在 shared 中声明的字段**。
+- **数据隔离**：
+  - 每个测试用例的**业务数据（工单、订单、店铺等）必须相互独立**；
+  - **同一平台/租户的登录态可复用**（通过 `storageState`），以减少重复登录与第三方限流风险。
+
+- **测试用例必须先设计，再实现**
+  - 所有测试（单元 / 集成 / E2E）在编写代码前，必须完成用例设计，明确以下要素：
+  - 输入条件：正常值、边界值、非法值、缺失参数等；
+  - 系统行为：成功路径、错误处理、副作用（如 DB 写入、日志、第三方调用）；
+  - 验收标准：应断言什么？不应依赖哪些未声明字段？
+  - 数据策略：如何准备初始数据？如何清理以保证隔离？
+- **设计产物形式要求：**
+  - 单元 / 集成测试：
+    以 结构化注释 + 测试函数骨架 形式存在于 .spec.ts 或 .e2e-spec.ts 文件中， 例如：
+    ```
+    // GIVEN: 用户访问 /shopline/install 缺少 appkey
+    // WHEN: 页面加载
+    // THEN: 显示错误 "missing required parameters"
+    it('should show error when appkey is missing', () => {
+      // TODO: implement test
+    });
+    ```
+
+---
+
+## 1. 分层与技术栈
+
+| 层级 | 前端                       | 后端                                      |
+| ---- | -------------------------- | ----------------------------------------- |
+| 单元 | Jest、RTL、jest.mock / MSW | Jest、Mock Prisma / Mock HTTP 客户端      |
+| 集成 | MSW、多组件/路由交互       | Supertest + **隔离测试 DB** + Mock 第三方 |
+| E2E  | Playwright（build 或 dev） | 完整应用 + 测试库（可选）                 |
+
+- **单元测试**：聚焦纯逻辑（Service、Util、Hook、组件行为）；接口/参数/返回值变更时同步更新断言与 Mock。
+- **集成测试**：验证 API、DB、第三方服务集成；API 契约或 DB schema 变更时更新请求、断言与种子数据。
+- **E2E 测试**：覆盖真实浏览器下的**关键用户旅程**；页面/流程变更时更新步骤与选择器，**优先使用 `data-testid`、`role+name`，避免脆弱 CSS/XPath**。
+
+---
+
+## 2. E2E 两阶段流程（推荐）
+
+- **阶段一（需求/设计阶段）**：  
+  根据 PRD、Use Case 或技术设计，生成 E2E **测试骨架**（含用例标题、步骤描述、预期结果、验收标准）。URL、选择器、API 可用占位符（如 `// TODO: FILL_ME`），便于需求对齐与评审。
+- **阶段二（实现就绪后）**：  
+  按真实页面、`data-testid`、API 响应与 `storageState` **填实骨架**，运行并根据失败信息修正，直至通过。
+
+- **AI 协作规则**：
+  - 若仅有需求/设计 → 产出**可评审的骨架**
+  - 若实现已完成 → 产出**可执行用例**或填实/修正既有骨架
+
+---
+
+## 3. 目录与配置
+
+### 3.1 后端（`api/`）
+
+业务代码位于 `api/src/`；所有测试集中于 `api/test/`，与源码分离：
+
+```
+api/
+  src/                          # 业务代码
+  test/
+    unit/                       # 单元测试（Jest + Mock，不连 DB）
+      shopline/
+        shopline-auth.service.spec.ts
+    integration/                # 集成测试（Supertest + 隔离 DB）
+      shopline/
+        shopline.controller.e2e-spec.ts   # ← 注意文件名！
+    fixtures/                   # 共享：工厂、Mock 数据
+      shops.factory.ts
+    setup/
+      db.ts                     # Testcontainers 启动/清理 DB
+    jest.unit.json              # 仅跑 unit/，快、无 DB
+    jest.integration.json       # 仅跑 integration/，需 DB、超时更长
+```
+
+- **单元测试**：测 Service、Guard、Util 等；**完全 Mock 依赖**（Prisma、HTTP 客户端等）。
+- **集成测试**：
+  - 测 Controller/API；
+  - **必须使用隔离数据库**（推荐 Testcontainers 启动 PostgreSQL 容器，或 SQLite 内存库）；
+  - **禁止连接共享远程测试数据库**；
+  - 每个用例前后**自动清理数据**（通过事务回滚或 `beforeEach` 删除）。
+- **文件命名**：集成测试统一使用 `.e2e-spec.ts` 后缀，避免与单元测试混淆。
+
+### 3.2 前端（`app/src/`）
+
+单元测试与源码**同目录**，命名 `*.test.ts(x)`：
+
+```
+app/src/
+  components/Header/Header.test.tsx
+  hooks/useAuth/useAuth.test.ts
+  pages/shopline/Callback.test.tsx
+  providers/Auth/Auth.test.tsx
+```
+
+- **Provider 测试**：应聚焦验证 **Context 提供的值是否正确**，而非渲染子组件逻辑。推荐使用 `renderHook` 或消费 Context 的轻量子组件。
+- **组件测试**：使用 RTL 渲染组件，通过用户交互（fireEvent）和状态断言验证行为。
+- **useHttp + useEffect 防无限请求**（实现与测试双重约束）：
+  - **根因**：`useHttp` 返回的 `fetchData` 每次渲染/请求后为新引用，若放入 `useEffect` 依赖数组，会导致「请求完成 → setState → 重渲染 → fetchData 引用变化 → effect 再执行 → 再次请求」的无限循环。
+  - **实现**：页面「仅挂载时请求一次」的场景，`useEffect` 依赖数组必须为 `[]`，**禁止**将 `fetchData` 列入依赖。
+  - **测试**：该问题无法通过 Mock 了 `useHttp` 的前端单元测试发现（Mock 返回稳定引用，无限循环不会在单测中复现）。**必须通过 E2E**：进入对应页面后，用 Playwright 监听网络请求，断言该接口仅被调用预期次数（如 1 次）或断言无重复请求，以回归此类问题。
+
+### 3.3 E2E 与 Playwright
+
+- **位置**：`tests/e2e/`，按功能分文件（如 `shopline-install.spec.ts`）
+- **配置**：根目录 `playwright.config.ts`，支持多环境（通过 `baseURL` 或环境变量）
+- **登录态**：通过 `globalSetup` 生成 `storageState`，**按租户/项目隔离**（如 `state-shopA.json`）
+
+---
+
+## 4. 选择器与断言
+
+- **选择器优先级**（从高到低）：
+  1. `data-testid="xxx"`
+  2. `role` + `name`（如 `getByRole('button', { name: 'Submit' })`）
+  3. **可见文案（带 i18n key 映射）**
+  4. CSS class（最后手段，需加注释说明原因）
+- **断言原则**：
+  - 仅断言 `@your-org/shared` 中定义的字段；
+  - 单用例内尽量 **一个逻辑断言**，便于失败定位；
+  - 避免“魔法字符串”，使用常量或枚举。
+
+---
+
+## 5. 多系统与状态管理
+
+- **登录态复用**：允许在同一平台/租户内复用 `storageState`，**但不同租户必须使用独立 state 文件**。
+- **业务数据隔离**：
+  - 工单、订单、店铺等**不得跨用例共享**；
+  - 用例**不得假设其他用例创建的数据存在**；
+  - **禁止依赖测试执行顺序**。
+- **iframe 支持**：使用 `page.frameLocator('iframe-selector')` 定位内部元素。
+
+---
+
+## 6. 执行与 CI
+
+- **本地开发**：
+  - 单元测试：`jest --watch`（快速反馈）
+  - 集成测试：按需运行（需启动 Docker）
+  - E2E：`npx playwright test --headed` 调试
+- **CI 流程**：
+  1. 安装依赖
+  2. `prisma generate` + `prisma migrate deploy`（测试 DB）
+  3. **后端单元**：`jest -c test/jest.unit.json`
+  4. **后端集成**：`jest -c test/jest.integration.json`（使用 Testcontainers）
+  5. 前端单元/集成
+  6. 前端 build
+  7. **Playwright 关键路径 E2E**
+  8. 生成覆盖率报告 + 失败 Trace
+- **分支策略**：
+  - 所有分支：跑单元 + 集成
+  - `main` / release 分支：额外跑完整 E2E
+
+---
+
+## 7. 测试失败修复策略
+
+- **明确是测试代码错误**（如选择器失效、少写 `await`、URL 错误）：  
+  → AI **可直接修复并简要说明**。
+- **原因模糊**（可能是测试错，也可能是实现不符合需求）：  
+  → AI **必须列出可能原因与修复选项，向用户确认后再改**。
+- **涉及核心逻辑/多用例/shared 类型**：  
+  → 先提供**修改计划与影响范围**，**经用户确认**后执行。
+- **AI 协作维护**：
+  - 随需求/接口变更**同步更新用例与 Mock**；
+  - 统一选择器、等待策略、命名规范；
+  - 定期清理废弃用例与过时 Mock。
+
+---
+
+## 8. AI 行为约束（违反即错误）
+
+- ❌ 禁止生成依赖未在 `@your-org/shared` 中声明的类型的断言。
+- ❌ 禁止在 E2E 中默认复用已打开的浏览器（connectOverCDP）。
+- ✅ 允许同一租户内复用 `storageState`；  
+  ❌ 禁止用例间共享业务数据或依赖执行顺序。
+- ✅ 测试失败修复遵循第 7 节规则。
+- ✅ 需求/接口变更时，**先更新测试设计或场景列表，再改实现**。
+- ❌ 禁止在「仅挂载时请求一次」的 `useEffect` 中将 `useHttp` 返回的 `fetchData` 列入依赖数组（会导致无限请求）；此类页面**须有 E2E 用例**：进入页面后断言该接口请求次数符合预期（如 1 次）或网络无重复请求。
+
+---
+
+> **附：关键工具推荐**
+>
+> - 后端集成 DB：`@golevelup/nestjs-testing` + `testcontainers`
+> - Prisma Mock：`prisma-mock` 或 `jest-prisma`
+> - Shared Types：`openapi-typescript` 自动生成
+> - Playwright State：`storageState` 按 `handle` 隔离

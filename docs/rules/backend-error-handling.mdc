@@ -1,0 +1,56 @@
+---
+alwaysApply: true
+---
+
+## 2. 外部 API 错误处理规则
+
+适用范围：
+
+- 第三方平台 API
+- 外部 HTTP 请求
+- Webhook / OAuth / ERP / 电商平台接口
+
+规则：
+
+- 必须先解析并规范化外部错误信息
+- 必须根据对应平台的错误结构严格提取可读错误文本
+- 解析完成后，统一使用 `BadRequestException(string)` 抛出
+
+禁止行为：
+
+- 直接透传第三方错误对象
+- 直接抛出 response / error 原始结构
+- 在 Controller 层处理第三方错误
+- 在异常中携带平台原始错误结构
+
+---
+
+## 3. 内部错误处理规则
+
+适用范围：
+
+- Service
+- Domain
+- Business Logic
+- 数据校验
+- 状态判断
+
+规则：
+
+- 所有内部错误统一使用 `BadRequestException`
+- 错误内容必须是字符串
+- 错误信息必须明确表达失败原因
+
+禁止行为：
+
+- 抛出自定义 Error class
+- 返回错误状态而不抛异常
+- 使用模糊或兜底语义错误信息（如 `error occurred`）
+
+---
+
+## 4. Catch 错误信息获取规范
+
+在 `catch` 中处理错误时：
+
+- 只允许以下方式获取错误信息：
