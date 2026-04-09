@@ -22,6 +22,11 @@ enum RewardRecordStatus {
   ROLLED_BACK
 }
 
+enum RewardBatchType {
+  REGULAR
+  ADJUSTMENT
+}
+
 enum LedgerType {
   REWARD
   ROLLBACK
@@ -30,6 +35,9 @@ enum LedgerType {
 model RewardBatch {
   id          String            @id @default(uuid())
   period      String            @unique // e.g. 2026-Q1
+  batchType   RewardBatchType   @default(REGULAR)
+  parentPeriod String?
+  triggeredBy String?
   startDate   DateTime
   endDate     DateTime
   status      RewardBatchStatus @default(PENDING)
@@ -55,6 +63,9 @@ model RewardRecord {
   lastError        String?
   nextRetryAt      DateTime?
   processedAt      DateTime?
+  rollbackReason   String?
+  rollbackBy       String?
+  rollbackAt       DateTime?
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
 

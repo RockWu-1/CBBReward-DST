@@ -34,16 +34,17 @@ export class LedgerService {
   appendRollbackLedger(
     tx: Prisma.TransactionClient,
     record: RewardRecord,
-    negativeAmount: Decimal,
+    amount: Decimal,
     idempotencyKey: string,
     externalTxnId: string,
     metadata: Prisma.JsonObject,
   ) {
+    const rollbackAmount = amount.abs().mul(-1);
     return tx.beansLedger.create({
       data: {
         userId: record.userId,
         rewardRecordId: record.id,
-        changeAmount: new Prisma.Decimal(negativeAmount.toString()),
+        changeAmount: new Prisma.Decimal(rollbackAmount.toString()),
         type: LedgerType.ROLLBACK,
         referenceId: `${record.batchId}:${record.id}`,
         idempotencyKey,

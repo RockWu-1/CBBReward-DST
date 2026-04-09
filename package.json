@@ -6,6 +6,10 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",
+    "test": "jest --runInBand",
+    "test:unit": "jest --config test/jest.unit.json --runInBand",
+    "test:integration": "jest --config test/jest.integration.json --runInBand --passWithNoTests",
+    "test:watch": "jest --watch --runInBand",
     "start": "node dist/main",
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main",
@@ -32,10 +36,13 @@
     "@nestjs/cli": "^11.0.0",
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.0.0",
+    "@types/jest": "^30.0.0",
     "@types/node": "^22.13.10",
     "eslint": "^9.22.0",
     "eslint-config-prettier": "^10.0.1",
+    "jest": "^30.2.0",
     "prisma": "^6.5.0",
+    "ts-jest": "^29.4.5",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.2"
   }

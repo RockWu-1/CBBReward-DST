@@ -1,10 +1,12 @@
 ﻿import { Injectable, Logger } from '@nestjs/common';
-import { Prisma, RewardBatchStatus, RewardRecordStatus } from '@prisma/client';
+import { Prisma, RewardBatchStatus, RewardBatchType, RewardRecordStatus } from '@prisma/client';
 import Decimal from 'decimal.js';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { ExternalApiError } from '../../common/errors/external-api.error';
 import { BeansService } from '../beans/beans.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { OrderService } from '../order/order.service';
+import { CreateAdjustmentRequestDto } from './dto/create-adjustment.request.dto';
 
 type QuarterPeriod = {
   period: string;
@@ -85,12 +87,25 @@ export class RewardService {
     }
   }
 
-  async rollbackRecord(recordId: string, reason: string): Promise<void> {
+  async retryRecord(recordId: string): Promise<void> {
+    await this.processOneRecord(recordId);
+  }
+
+  async rollbackRecord(recordId: string, reason: string, operator: string): Promise<void> {
     const record = await this.prisma.rewardRecord.findUnique({ where: { id: recordId } });
     if (!record) {
       throw new Error(`Record ${recordId} not found`);
     }
     if (record.status === RewardRecordStatus.ROLLED_BACK) {
+      await this.prisma.rewardRecord.update({
+        where: { id: record.id },
+        data: {
+          status: RewardRecordStatus.ROLLED_BACK,
+          rollbackReason: reason,
+          rollbackBy: operator,
+          rollbackAt: record.rollbackAt ?? new Date(),
+        },
+      });
       return;
     }
 
@@ -101,7 +116,12 @@ export class RewardService {
     if (existing) {
       await this.prisma.rewardRecord.update({
         where: { id: record.id },
-        data: { status: RewardRecordStatus.ROLLED_BACK },
+        data: {
+          status: RewardRecordStatus.ROLLED_BACK,
+          rollbackReason: reason,
+          rollbackBy: operator,
+          rollbackAt: existing.createdAt,
+        },
       });
       return;
     }
@@ -120,11 +140,16 @@ export class RewardService {
         rollbackAmount,
         idempotencyKey,
         external.transactionId,
-        { reason },
+        { reason, operator },
       );
       await tx.rewardRecord.update({
         where: { id: record.id },
-        data: { status: RewardRecordStatus.ROLLED_BACK },
+        data: {
+          status: RewardRecordStatus.ROLLED_BACK,
+          rollbackReason: reason,
+          rollbackBy: operator,
+          rollbackAt: new Date(),
+        },
       });
     });
   }
@@ -180,6 +205,20 @@ export class RewardService {
     const month = date.getMonth() + 1;
     const day = date.getDate();
     return day === 1 && [1, 4, 7, 10].includes(month);
+  }
+
+  async createAdjustmentBatch(dto: CreateAdjustmentRequestDto) {
+    return this.prisma.rewardBatch.create({
+      data: {
+        period: dto.period,
+        batchType: RewardBatchType.ADJUSTMENT,
+        parentPeriod: dto.parentPeriod,
+        triggeredBy: dto.triggeredBy,
+        startDate: dto.startDate,
+        endDate: dto.endDate,
+        rewardRate: new Prisma.Decimal(dto.rewardRate.toString()),
+      },
+    });
   }
 
   private buildQuarter(year: number, quarter: 1 | 2 | 3 | 4): QuarterPeriod {
@@ -262,6 +301,7 @@ export class RewardService {
           status: RewardRecordStatus.SUCCESS,
           processedAt: existing.createdAt,
           lastError: null,
+          nextRetryAt: null,
         },
       });
       return;
@@ -271,6 +311,7 @@ export class RewardService {
       const external = await this.beansService.grantBeans({
         userId: record.userId,
         beans: Number(record.rewardAmount),
+        orderAmount: Number(record.totalOrderAmount),
         idempotencyKey,
       });
 
@@ -295,14 +336,16 @@ export class RewardService {
       });
     } catch (error) {
       const attempt = record.attemptCount + 1;
-      const retryDelayMinutes = Math.min(60, attempt * 5);
+      const isRetryable = error instanceof ExternalApiError ? error.retryable : true;
+      const canRetry = isRetryable && attempt < 8;
+      const retryDelayMinutes = Math.min(60, 5 * 2 ** Math.max(attempt - 1, 0));
       await this.prisma.rewardRecord.update({
         where: { id: record.id },
         data: {
           status: RewardRecordStatus.FAILED,
           attemptCount: attempt,
           lastError: error instanceof Error ? error.message : 'Unknown error',
-          nextRetryAt: new Date(Date.now() + retryDelayMinutes * 60_000),
+          nextRetryAt: canRetry ? new Date(Date.now() + retryDelayMinutes * 60_000) : null,
         },
       });
     }

@@ -15,18 +15,32 @@ export class QuarterlyRewardScheduler {
   })
   async handleDailyCheck() {
     const today = new Date();
+    const runTargets: Array<{ period: string; startDate: Date; endDate: Date }> = [];
 
-    // Primary run at quarter-start day
+    // Collect primary run target at quarter-start day first
     if (this.rewardService.isQuarterStartDay(today)) {
       const currentQuarterTarget = this.rewardService.getPreviousQuarter(today);
       this.logger.log(`Quarter start detected, run period=${currentQuarterTarget.period}`);
-      await this.rewardService.runQuarterlyReward(currentQuarterTarget);
+      runTargets.push(currentQuarterTarget);
     }
 
-    // Catch-up run for restart/downtime scenario
-    const periods = await this.rewardService.findCatchUpPeriods(today);
-    for (const period of periods) {
-      this.logger.log(`Catch-up run for period=${period.period}`);
+    // Merge catch-up targets, then deduplicate by period (keep first seen)
+    const catchUpPeriods = await this.rewardService.findCatchUpPeriods(today);
+    runTargets.push(...catchUpPeriods);
+
+    const deduplicatedTargets: typeof runTargets = [];
+    console.log("🚀 ~ QuarterlyRewardScheduler ~ handleDailyCheck ~ deduplicatedTargets:", deduplicatedTargets)
+    const seenPeriods = new Set<string>();
+    for (const target of runTargets) {
+      if (seenPeriods.has(target.period)) {
+        continue;
+      }
+      seenPeriods.add(target.period);
+      deduplicatedTargets.push(target);
+    }
+
+    for (const period of deduplicatedTargets) {
+      this.logger.log(`Scheduled run for period=${period.period}`);
       await this.rewardService.runQuarterlyReward(period);
     }
   }

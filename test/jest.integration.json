@@ -1,0 +1,18 @@
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": "..",
+  "testEnvironment": "node",
+  "testMatch": ["<rootDir>/test/integration/**/*.spec.ts", "<rootDir>/test/integration/**/*.e2e-spec.ts"],
+  "transform": {
+    "^.+\\.(t|j)s$": [
+      "ts-jest",
+      {
+        "tsconfig": {
+          "types": ["node", "jest"]
+        }
+      }
+    ]
+  },
+  "collectCoverageFrom": ["<rootDir>/src/**/*.ts"],
+  "coverageDirectory": "<rootDir>/coverage/integration"
+}
