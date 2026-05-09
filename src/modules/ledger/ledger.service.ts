@@ -20,7 +20,7 @@ export class LedgerService {
   ) {
     return tx.beansLedger.create({
       data: {
-        userId: record.userId,
+        customerId: record.customerId,
         rewardRecordId: record.id,
         changeAmount: new Prisma.Decimal(amount.toString()),
         type: LedgerType.REWARD,
@@ -42,7 +42,7 @@ export class LedgerService {
     const rollbackAmount = amount.abs().mul(-1);
     return tx.beansLedger.create({
       data: {
-        userId: record.userId,
+        customerId: record.customerId,
         rewardRecordId: record.id,
         changeAmount: new Prisma.Decimal(rollbackAmount.toString()),
         type: LedgerType.ROLLBACK,

@@ -5,14 +5,14 @@ import { ExternalApiError } from '../../common/errors/external-api.error';
 import { EnvService } from '../../common/env/env.service';
 
 type GrantBeansInput = {
-  userId: string;
+  customerEmail: string;
   beans: number;
   idempotencyKey: string;
   orderAmount: number;
 };
 
 type RollbackBeansInput = {
-  userId: string;
+  customerEmail: string;
   beans: number;
   reason: string;
   idempotencyKey: string;
@@ -28,19 +28,19 @@ export class BeansService {
   ) {}
 
   async grantBeans(input: GrantBeansInput): Promise<{ transactionId: string }> {
-    this.logger.log(`Grant beans user=${input.userId} amount=${input.beans}`);
+    this.logger.log(`Grant beans user=${input.customerEmail} amount=${input.beans}`);
 
     if (!this.env.isBeansRealCallEnabled()) {
       return { transactionId: `txn_reward_${input.idempotencyKey}` };
     }
 
-    this.assertRealCallAllowed(input.userId);
+    this.assertRealCallAllowed(input.customerEmail);
     return this.postToBeans(
       '/v3/liana/credit/',
       {
-        account: input.userId,
+        account: input.customerEmail,
         rule: this.env.getBeansRewardRule(),
-        quantity: input.beans,
+        quantity: String(input.beans),
         description: `Customer loyalty rewarded for spending $${input.orderAmount} for last quarter`,
         uid: input.idempotencyKey,
       },
@@ -51,18 +51,18 @@ export class BeansService {
 
   async rollbackBeans(input: RollbackBeansInput): Promise<{ transactionId: string }> {
     this.logger.warn(
-      `Rollback beans user=${input.userId} amount=${input.beans} reason=${input.reason}`,
+      `Rollback beans user=${input.customerEmail} amount=${input.beans} reason=${input.reason}`,
     );
 
     if (!this.env.isBeansRealCallEnabled()) {
       return { transactionId: `txn_rollback_${input.idempotencyKey}` };
     }
 
-    this.assertRealCallAllowed(input.userId);
+    this.assertRealCallAllowed(input.customerEmail);
     return this.postToBeans(
       '/v3/liana/debit/',
       {
-        account: input.userId,
+        account: input.customerEmail,
         rule: this.env.getBeansRollbackRule(),
         quantity: input.beans,
         description: `Quarter reward rollback: ${input.reason}`,
@@ -107,24 +107,25 @@ export class BeansService {
       });
     }
 
-    const headers: Record<string, string> = {
-      'Idempotency-Key': idempotencyKey,
-    };
+    const headers: Record<string, string> = {};
+
 
     const apiKey = this.env.getBeansApiKey();
+    console.log("🚀 ~ BeansService ~ postToBeans ~ apiKey:", apiKey)
     if (apiKey) {
       headers.Authorization = `Basic ${Buffer.from(`${apiKey}:`).toString('base64')}`;
     }
 
     try {
       const response = await firstValueFrom(
-        this.http.post<{ transactionId?: string }>(`${baseUrl}${path}`, body, {
+        this.http.post<{ id?: string }>(`${baseUrl}${path}`, body, {
           headers,
           timeout: this.env.getBeansRequestTimeoutMs(),
         }),
       );
+      console.log("🚀 ~ BeansService ~ postToBeans ~ response:", response)
 
-      const transactionId = response.data?.transactionId;
+      const transactionId = response.data?.id; //TODO debug transactionId 为id
       if (typeof transactionId !== 'string' || transactionId.length === 0) {
         throw new ExternalApiError({
           provider: 'Beans',
@@ -136,7 +137,8 @@ export class BeansService {
       }
 
       return { transactionId };
-    } catch (error) {
+    } catch (error:any) {
+      console.error('error when send post to beans',JSON.stringify(error));
       throw ExternalApiError.fromUnknown('Beans', operation, error);
     }
   }

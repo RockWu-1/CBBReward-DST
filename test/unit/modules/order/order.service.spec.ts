@@ -77,11 +77,11 @@ describe('OrderService.fetchAndAggregateUserOrders', () => {
     expect(result).toEqual(
       expect.arrayContaining([
         {
-          userId: '1001',
+          customerId: 1001,
           totalAmount: new Decimal('30.35'),
         },
         {
-          userId: '1002',
+          customerId: 1002,
           totalAmount: new Decimal('5'),
         },
       ]),

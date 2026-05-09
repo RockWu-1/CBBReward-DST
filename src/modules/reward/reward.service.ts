@@ -4,6 +4,7 @@ import Decimal from 'decimal.js';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { ExternalApiError } from '../../common/errors/external-api.error';
 import { BeansService } from '../beans/beans.service';
+import { BigcommerceService } from '../bigcommerce/bigcommerce.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { OrderService } from '../order/order.service';
 import { CreateAdjustmentRequestDto } from './dto/create-adjustment.request.dto';
@@ -14,8 +15,8 @@ type QuarterPeriod = {
   endDate: Date;
 };
 
-type UserOrderAggregate = {
-  userId: string;
+type CustomerOrderAggregate = {
+  customerId: number;
   totalAmount: Decimal;
 };
 
@@ -28,6 +29,7 @@ export class RewardService {
     private readonly orderService: OrderService,
     private readonly beansService: BeansService,
     private readonly ledgerService: LedgerService,
+    private readonly bigcommerce: BigcommerceService,
   ) {}
 
   async runQuarterlyReward(period: QuarterPeriod): Promise<void> {
@@ -44,12 +46,11 @@ export class RewardService {
       data: { status: RewardBatchStatus.PROCESSING, startedAt: new Date() },
     });
 
-    const aggregates = await this.orderService.fetchAndAggregateUserOrders(
-      period.startDate,
-      period.endDate,
-    );
-
-    await this.createOrUpdateRewardRecords(batch.id, aggregates, rewardRate);
+    // const aggregates = await this.orderService.fetchAndAggregateUserOrders(
+    //   period.startDate,
+    //   period.endDate,
+    // );
+    // await this.createOrUpdateRewardRecords(batch.id, aggregates, rewardRate);
     await this.processPendingRecords(batch.id);
 
     const pendingOrFailedCount = await this.prisma.rewardRecord.count({
@@ -71,7 +72,7 @@ export class RewardService {
     });
   }
 
-  async retryFailedRecords(batchId: string): Promise<void> {
+  async retryFailedRecords(batchId: number): Promise<void> {
     const retryCandidates = await this.prisma.rewardRecord.findMany({
       where: {
         batchId,
@@ -87,14 +88,17 @@ export class RewardService {
     }
   }
 
-  async retryRecord(recordId: string): Promise<void> {
+  async retryRecord(recordId: number): Promise<void> {
     await this.processOneRecord(recordId);
   }
 
-  async rollbackRecord(recordId: string, reason: string, operator: string): Promise<void> {
+  async rollbackRecord(recordId: number, reason: string, operator: string): Promise<void> {
     const record = await this.prisma.rewardRecord.findUnique({ where: { id: recordId } });
     if (!record) {
       throw new Error(`Record ${recordId} not found`);
+    }
+    if (!record.customerEmail) {
+      throw new Error(`Missing customerEmail for reward record ${recordId}`);
     }
     if (record.status === RewardRecordStatus.ROLLED_BACK) {
       await this.prisma.rewardRecord.update({
@@ -127,7 +131,7 @@ export class RewardService {
     }
 
     const external = await this.beansService.rollbackBeans({
-      userId: record.userId,
+      customerEmail: record.customerEmail,
       beans: rollbackAmount.abs().toNumber(),
       reason,
       idempotencyKey,
@@ -252,15 +256,19 @@ export class RewardService {
   }
 
   private async createOrUpdateRewardRecords(
-    batchId: string,
-    aggregates: UserOrderAggregate[],
+    batchId: number,
+    aggregates: CustomerOrderAggregate[],
     rewardRate: Decimal,
   ): Promise<void> {
     for (const item of aggregates) {
+      console.log("🚀 ~ RewardService ~ createOrUpdateRewardRecords ~ item:", item)
       const rewardAmount = item.totalAmount.mul(rewardRate).toDecimalPlaces(2);
+      const customer = await this.bigcommerce.getCustomer(item.customerId);
       await this.prisma.rewardRecord.upsert({
-        where: { batchId_userId: { batchId, userId: item.userId } },
+        where: { batchId_customerId: { batchId, customerId: item.customerId } },
         update: {
+          customerName: customer.customerName,
+          customerEmail: customer.customerEmail,
           totalOrderAmount: new Prisma.Decimal(item.totalAmount.toString()),
           rewardAmount: new Prisma.Decimal(rewardAmount.toString()),
           status: RewardRecordStatus.PENDING,
@@ -269,7 +277,9 @@ export class RewardService {
         },
         create: {
           batchId,
-          userId: item.userId,
+          customerId: item.customerId,
+          customerName: customer.customerName,
+          customerEmail: customer.customerEmail,
           totalOrderAmount: new Prisma.Decimal(item.totalAmount.toString()),
           rewardAmount: new Prisma.Decimal(rewardAmount.toString()),
         },
@@ -277,21 +287,23 @@ export class RewardService {
     }
   }
 
-  private async processPendingRecords(batchId: string): Promise<void> {
+  private async processPendingRecords(batchId: number): Promise<void> {
     const records = await this.prisma.rewardRecord.findMany({
       where: { batchId, status: RewardRecordStatus.PENDING },
       orderBy: { createdAt: 'asc' },
       take: 2000,
     });
 
-    for (const record of records) {
-      await this.processOneRecord(record.id);
-    }
+    // for (const record of records) {
+    //   await this.processOneRecord(record.id);
+    // }
+    console.log("🚀 ~ RewardService ~ processPendingRecords ~ records[0]:", records[0])
+     await this.processOneRecord(records[0].id);
   }
 
-  private async processOneRecord(recordId: string): Promise<void> {
+  private async processOneRecord(recordId: number): Promise<void> {
     const record = await this.prisma.rewardRecord.findUniqueOrThrow({ where: { id: recordId } });
-    const idempotencyKey = `reward:${record.id}`;
+    const idempotencyKey = `reward_${record.id}`;
 
     const existing = await this.ledgerService.findByIdempotencyKey(idempotencyKey);
     if (existing) {
@@ -306,10 +318,23 @@ export class RewardService {
       });
       return;
     }
+    if (!record.customerEmail) {
+      await this.prisma.rewardRecord.update({
+        where: { id: record.id },
+        data: {
+          status: RewardRecordStatus.FAILED,
+          attemptCount: record.attemptCount + 1,
+          lastError: `Missing customerEmail for reward record ${record.id}`,
+          nextRetryAt: null,
+        },
+      });
+      return;
+    }
 
     try {
       const external = await this.beansService.grantBeans({
-        userId: record.userId,
+        // customerEmail: record.customerEmail,
+        customerEmail: 'rock.wu@silksoftware.com',
         beans: Number(record.rewardAmount),
         orderAmount: Number(record.totalOrderAmount),
         idempotencyKey,
@@ -321,7 +346,7 @@ export class RewardService {
           record,
           new Decimal(record.rewardAmount.toString()),
           idempotencyKey,
-          external.transactionId,
+          external.transactionId, //TODO debug transactionId 是什么应该怎么取
         );
 
         await tx.rewardRecord.update({

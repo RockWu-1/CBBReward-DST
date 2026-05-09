@@ -132,4 +132,82 @@ describe('BigcommerceService', () => {
       }),
     ).rejects.toThrow(/401/);
   });
+
+  it('should call v2 customer endpoint and return name from `name` field first', async () => {
+    http.get.mockReturnValue(
+      of({
+        data: {
+          id: 88,
+          name: 'Ada Lovelace',
+          first_name: 'Ada',
+          last_name: 'Byron',
+          email: 'ada@example.com',
+        },
+      }),
+    );
+
+    const result = await service.getCustomer(88);
+
+    expect(result).toEqual({
+      customerName: 'Ada Lovelace',
+      customerEmail: 'ada@example.com',
+    });
+
+    expect(http.get).toHaveBeenCalledWith(
+      'https://api.bigcommerce.com/stores/store-abc/v2/customers/88',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'X-Auth-Token': 'token-abc',
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        }),
+      }),
+    );
+  });
+
+  it('should fallback to trimmed first_name + last_name when `name` is missing', async () => {
+    http.get.mockReturnValue(
+      of({
+        data: {
+          id: 99,
+          first_name: '  Grace ',
+          last_name: ' Hopper  ',
+          email: 'grace@example.com',
+        },
+      }),
+    );
+
+    const result = await service.getCustomer(99);
+
+    expect(result).toEqual({
+      customerName: 'Grace Hopper',
+      customerEmail: 'grace@example.com',
+    });
+  });
+
+  it('should throw BadRequestException when getCustomer env vars are missing', async () => {
+    delete process.env.BIGCOMMERCE_ACCESS_TOKEN;
+
+    await expect(service.getCustomer(1)).rejects.toThrow(BadRequestException);
+    expect(http.get).not.toHaveBeenCalled();
+  });
+
+  it('should throw BadRequestException with status and not retry when getCustomer downstream fails', async () => {
+    http.get.mockReturnValue(
+      throwError(() => {
+        const err = new AxiosError('Unauthorized');
+        err.response = {
+          status: 401,
+          statusText: 'Unauthorized',
+          headers: {},
+          config: {} as never,
+          data: { title: 'Invalid token' },
+        };
+        return err;
+      }),
+    );
+
+    await expect(service.getCustomer(1)).rejects.toThrow(/401/);
+    expect(http.get).toHaveBeenCalledTimes(1);
+  });
 });

@@ -48,7 +48,7 @@ describe('BeansService', () => {
 
   it('returns synthetic transaction id when real call switch is disabled', async () => {
     const result = await service.grantBeans({
-      userId: 'user-1',
+      customerEmail: 'user-1@example.com',
       beans: 12,
       idempotencyKey: 'abc',
       orderAmount: 24
@@ -64,7 +64,7 @@ describe('BeansService', () => {
 
     await expect(
       service.grantBeans({
-        userId: 'normal.user@silksoftware.com',
+        customerEmail: 'normal.user@silksoftware.com',
         beans: 9,
         idempotencyKey: 'ik-1',
         orderAmount: 18
@@ -86,7 +86,7 @@ describe('BeansService', () => {
     );
 
     const result = await service.grantBeans({
-      userId: 'rock.wu@silksoftware.com',
+      customerEmail: 'rock.wu@silksoftware.com',
       beans: 66,
       idempotencyKey: 'ik-2',
       orderAmount: 132
@@ -127,7 +127,7 @@ describe('BeansService', () => {
 
     await expect(
       service.grantBeans({
-        userId: 'rock.wu@silksoftware.com',
+        customerEmail: 'rock.wu@silksoftware.com',
         beans: 20,
         idempotencyKey: 'ik-3',
         orderAmount: 40
@@ -157,7 +157,7 @@ describe('BeansService', () => {
 
     await expect(
       service.rollbackBeans({
-        userId: 'rock.wu@silksoftware.com',
+        customerEmail: 'rock.wu@silksoftware.com',
         beans: 20,
         reason: 'fix',
         idempotencyKey: 'ik-4',

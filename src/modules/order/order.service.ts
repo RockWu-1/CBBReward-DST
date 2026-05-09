@@ -1,25 +1,29 @@
 import { Injectable, Logger } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import { BigcommerceService } from '../bigcommerce/bigcommerce.service';
-import { OrderSnapshot } from './types/order-snapshot.type';
 
-export type UserOrderAggregate = {
-  userId: string;
+type CustomerOrderSnapshot = {
+  customerId: number;
   totalAmount: Decimal;
 };
 
-export function aggregateSnapshotsByUser(
-  snapshots: OrderSnapshot[],
-): UserOrderAggregate[] {
-  const totalsByUser = new Map<string, Decimal>();
+export type CustomerOrderAggregate = {
+  customerId: number;
+  totalAmount: Decimal;
+};
+
+export function aggregateSnapshotsByCustomer(
+  snapshots: CustomerOrderSnapshot[],
+): CustomerOrderAggregate[] {
+  const totalsByCustomer = new Map<number, Decimal>();
 
   for (const snapshot of snapshots) {
-    const current = totalsByUser.get(snapshot.userId) ?? new Decimal(0);
-    totalsByUser.set(snapshot.userId, current.add(snapshot.totalAmount));
+    const current = totalsByCustomer.get(snapshot.customerId) ?? new Decimal(0);
+    totalsByCustomer.set(snapshot.customerId, current.add(snapshot.totalAmount));
   }
 
-  return Array.from(totalsByUser.entries()).map(([userId, totalAmount]) => ({
-    userId,
+  return Array.from(totalsByCustomer.entries()).map(([customerId, totalAmount]) => ({
+    customerId,
     totalAmount,
   }));
 }
@@ -34,12 +38,12 @@ export class OrderService {
   async fetchAndAggregateUserOrders(
     startDate: Date,
     endDate: Date,
-  ): Promise<UserOrderAggregate[]> {
+  ): Promise<CustomerOrderAggregate[]> {
     this.logger.log(
       `Fetch BigCommerce orders from ${startDate.toISOString()} to ${endDate.toISOString()}`,
     );
 
-    const snapshots: OrderSnapshot[] = [];
+    const snapshots: CustomerOrderSnapshot[] = [];
     let page = 1;
     let hasNextPage = true;
 
@@ -57,7 +61,7 @@ export class OrderService {
         }
 
         snapshots.push({
-          userId: String(order.customer_id),
+          customerId: order.customer_id,
           totalAmount: new Decimal(order.total_inc_tax),
         });
       }
@@ -66,6 +70,6 @@ export class OrderService {
       page += 1;
     }
 
-    return aggregateSnapshotsByUser(snapshots);
+    return aggregateSnapshotsByCustomer(snapshots);
   }
 }

@@ -1,4 +1,4 @@
-import { Body, Controller, Param, Post } from '@nestjs/common';
+import { Body, Controller, Param, ParseIntPipe, Post } from '@nestjs/common';
 import { CreateAdjustmentRequestDto } from './dto/create-adjustment.request.dto';
 import { RollbackRecordRequestDto } from './dto/rollback-record.request.dto';
 import { RewardService } from './reward.service';
@@ -13,18 +13,18 @@ export class RewardController {
   constructor(private readonly rewardService: RewardService) {}
 
   @Post('batches/:id/retry')
-  async retryBatch(@Param('id') batchId: string): Promise<void> {
+  async retryBatch(@Param('id', ParseIntPipe) batchId: number): Promise<void> {
     await this.rewardService.retryFailedRecords(batchId);
   }
 
   @Post('records/:id/retry')
-  async retryRecord(@Param('id') recordId: string): Promise<void> {
+  async retryRecord(@Param('id', ParseIntPipe) recordId: number): Promise<void> {
     await this.rewardService.retryRecord(recordId);
   }
 
   @Post('records/:id/rollback')
   async rollbackRecord(
-    @Param('id') recordId: string,
+    @Param('id', ParseIntPipe) recordId: number,
     @Body() body: RollbackRecordRequestDto,
   ): Promise<void> {
     await this.rewardService.rollbackRecord(recordId, body.reason, body.operator);
