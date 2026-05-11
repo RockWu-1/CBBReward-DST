@@ -49,3 +49,11 @@
 - 仅允许安全账户演练：`BEANS_SAFE_ACCOUNT` 必须为白名单测试账户。
 - 涉及回滚和补偿的操作需保留变更记录（操作者、时间、原因、影响范围）。
 - 大批量操作建议分批执行并逐批复核结果。
+
+## 6. Admin 管理台初始化与登录
+
+- 管理台入口：`/admin`。
+- 生产环境必须设置 `ADMIN_SESSION_SECRET`，未设置时服务启动会失败。
+- 建议默认 `MOCK_MODE=true`，此时 admin 页面中的 retry/rollback/adjustment/create-admin 操作只返回 mock 成功，不会调用真实发放。
+- 需要真实执行前，将 `MOCK_MODE=false` 并确认 Beans 安全开关与测试账户白名单配置无误。
+- 首个管理员建议手动插入 `AdminUser`（`email` + `passwordHash` + `SUPER_ADMIN`），后续由 `SUPER_ADMIN` 在管理台创建其它管理员。

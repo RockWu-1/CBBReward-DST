@@ -32,6 +32,11 @@ enum LedgerType {
   ROLLBACK
 }
 
+enum AdminRole {
+  SUPER_ADMIN
+  OPERATOR
+}
+
 model RewardBatch {
   id          Int               @id @default(autoincrement())
   period      String            @unique // e.g. 2026-Q1
@@ -108,4 +113,14 @@ model OrderSnapshot {
 
   @@index([batchId, customerId])
   @@unique([batchId, externalId])
+}
+
+model AdminUser {
+  id           Int       @id @default(autoincrement())
+  email        String    @unique
+  passwordHash String
+  role         AdminRole @default(OPERATOR)
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 }

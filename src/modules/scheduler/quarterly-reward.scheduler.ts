@@ -8,7 +8,7 @@ export class QuarterlyRewardScheduler implements OnModuleInit{
 
   constructor(private readonly rewardService: RewardService) {}
   async onModuleInit() {
-    await this.handleDailyCheck();
+    // await this.handleDailyCheck();
   }
 
   // Every day at 01:10:00 (timezone from env)
