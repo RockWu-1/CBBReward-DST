@@ -16,6 +16,7 @@ type RollbackBeansInput = {
   beans: number;
   reason: string;
   idempotencyKey: string;
+  externalTxnId: string;
 };
 
 @Injectable()
@@ -53,21 +54,9 @@ export class BeansService {
     this.logger.warn(
       `Rollback beans user=${input.customerEmail} amount=${input.beans} reason=${input.reason}`,
     );
-
-    if (!this.env.isBeansRealCallEnabled()) {
-      return { transactionId: `txn_rollback_${input.idempotencyKey}` };
-    }
-
-    this.assertRealCallAllowed(input.customerEmail);
     return this.postToBeans(
-      '/v3/liana/debit/',
-      {
-        account: input.customerEmail,
-        rule: this.env.getBeansRollbackRule(),
-        quantity: input.beans,
-        description: `Quarter reward rollback: ${input.reason}`,
-        uid: input.idempotencyKey,
-      },
+      `/v3/liana/credit/${input.externalTxnId}/cancel`,
+      {},
       input.idempotencyKey,
       'rollbackBeans',
     );
@@ -111,7 +100,6 @@ export class BeansService {
 
 
     const apiKey = this.env.getBeansApiKey();
-    console.log("🚀 ~ BeansService ~ postToBeans ~ apiKey:", apiKey)
     if (apiKey) {
       headers.Authorization = `Basic ${Buffer.from(`${apiKey}:`).toString('base64')}`;
     }
@@ -125,7 +113,7 @@ export class BeansService {
       );
       console.log("🚀 ~ BeansService ~ postToBeans ~ response:", response)
 
-      const transactionId = response.data?.id; //TODO debug transactionId 为id
+      const transactionId = response.data?.id;
       if (typeof transactionId !== 'string' || transactionId.length === 0) {
         throw new ExternalApiError({
           provider: 'Beans',

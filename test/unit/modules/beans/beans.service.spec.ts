@@ -161,6 +161,7 @@ describe('BeansService', () => {
         beans: 20,
         reason: 'fix',
         idempotencyKey: 'ik-4',
+        externalTxnId: 'test roll back id'
       }),
     ).rejects.toMatchObject({
       name: ExternalApiError.name,

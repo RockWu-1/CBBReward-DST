@@ -113,37 +113,24 @@ export class RewardService {
       return;
     }
 
+
     const rollbackAmount = new Decimal(record.rewardAmount.toString()).mul(-1);
-    const idempotencyKey = `rollback:${record.id}`;
 
-    const existing = await this.ledgerService.findByIdempotencyKey(idempotencyKey);
-    if (existing) {
-      await this.prisma.rewardRecord.update({
-        where: { id: record.id },
-        data: {
-          status: RewardRecordStatus.ROLLED_BACK,
-          rollbackReason: reason,
-          rollbackBy: operator,
-          rollbackAt: existing.createdAt,
-        },
-      });
-      return;
-    }
-
+    const existing = await this.ledgerService.findByRewardRecordId(record.id);
+    if (!existing || !existing.externalTxnId) throw new Error('Not found existed add credit record');
+    const idempotencyKey = existing.idempotencyKey;
     const external = await this.beansService.rollbackBeans({
       customerEmail: record.customerEmail,
       beans: rollbackAmount.abs().toNumber(),
       reason,
       idempotencyKey,
+      externalTxnId: existing.externalTxnId,
     });
 
     await this.prisma.$transaction(async (tx) => {
       await this.ledgerService.appendRollbackLedger(
         tx,
-        record,
-        rollbackAmount,
-        idempotencyKey,
-        external.transactionId,
+        existing,
         { reason, operator },
       );
       await tx.rewardRecord.update({
@@ -303,10 +290,10 @@ export class RewardService {
 
   private async processOneRecord(recordId: number): Promise<void> {
     const record = await this.prisma.rewardRecord.findUniqueOrThrow({ where: { id: recordId } });
-    const idempotencyKey = `reward_${record.id}`;
+    const idempotencyKey = `reward_${record.id}`; //TODO 上线时需要修改前缀
 
     const existing = await this.ledgerService.findByIdempotencyKey(idempotencyKey);
-    if (existing) {
+    if (existing && !!existing.externalTxnId) {
       await this.prisma.rewardRecord.update({
         where: { id: record.id },
         data: {
@@ -346,7 +333,7 @@ export class RewardService {
           record,
           new Decimal(record.rewardAmount.toString()),
           idempotencyKey,
-          external.transactionId, //TODO debug transactionId 是什么应该怎么取
+          external.transactionId,
         );
 
         await tx.rewardRecord.update({

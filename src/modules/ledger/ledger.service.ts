@@ -7,6 +7,10 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 export class LedgerService {
   constructor(private readonly prisma: PrismaService) {}
 
+  findByRewardRecordId(rewardRecordId: number): Promise<BeansLedger | null> {
+    return this.prisma.beansLedger.findFirst({ where: { rewardRecordId } });
+  }
+
   findByIdempotencyKey(idempotencyKey: string): Promise<BeansLedger | null> {
     return this.prisma.beansLedger.findUnique({ where: { idempotencyKey } });
   }
@@ -33,24 +37,18 @@ export class LedgerService {
 
   appendRollbackLedger(
     tx: Prisma.TransactionClient,
-    record: RewardRecord,
-    amount: Decimal,
-    idempotencyKey: string,
-    externalTxnId: string,
+    existed: BeansLedger,
     metadata: Prisma.JsonObject,
   ) {
-    const rollbackAmount = amount.abs().mul(-1);
-    return tx.beansLedger.create({
-      data: {
-        customerId: record.customerId,
-        rewardRecordId: record.id,
-        changeAmount: new Prisma.Decimal(rollbackAmount.toString()),
-        type: LedgerType.ROLLBACK,
-        referenceId: `${record.batchId}:${record.id}`,
-        idempotencyKey,
-        externalTxnId,
-        metadata,
+    return tx.beansLedger.update({
+      where: {
+        id: existed.id
       },
-    });
+      data: {
+        type: LedgerType.ROLLBACK,
+        metadata,
+      }
+    }
+    );
   }
 }

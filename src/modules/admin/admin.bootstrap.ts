@@ -23,6 +23,20 @@ export const setupAdminPanel = async (app: INestApplication): Promise<void> => {
   const expressAdminPkg = await importEsm('@adminjs/express');
   const AdminJS = adminPkg.default;
   const adminJs = new AdminJS(options.adminJsOptions);
+  const rootPath = adminJs.options.rootPath;
+  const rewardBatchListPath = `${rootPath}/resources/RewardBatch/actions/list`;
+  const expressApp = app.getHttpAdapter().getInstance();
+
+  const redirectToRewardBatchList = (req: any, res: any, next: () => void) => {
+    const isLoggedIn = Boolean(req?.session?.adminUser || req?.session?.admin);
+    if (!isLoggedIn) {
+      return next();
+    }
+    return res.redirect(rewardBatchListPath);
+  };
+
+  expressApp.get(rootPath, redirectToRewardBatchList);
+  expressApp.get(`${rootPath}/`, redirectToRewardBatchList);
 
   const router = expressAdminPkg.buildAuthenticatedRouter(
     adminJs,

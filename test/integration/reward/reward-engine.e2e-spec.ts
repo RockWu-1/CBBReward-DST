@@ -225,10 +225,11 @@ describe('App module wiring', () => {
 });
 
 describe('Ledger customer semantics', () => {
-  it('should write customerId (not userId) for reward and rollback ledger entries', async () => {
+  it('should write customerId for reward ledger and update existing ledger for rollback', async () => {
     const create = jest.fn().mockResolvedValue({ id: 1 });
+    const update = jest.fn().mockResolvedValue({ id: 1, type: 'ROLLBACK' });
     const tx = {
-      beansLedger: { create },
+      beansLedger: { create, update },
     } as unknown as Prisma.TransactionClient;
     const service = new LedgerService({} as never);
     const record = {
@@ -244,21 +245,32 @@ describe('Ledger customer semantics', () => {
       'reward:101',
       'txn-reward-1',
     );
+
+    const existingLedger = {
+      id: 1,
+      customerId: record.customerId,
+      rewardRecordId: record.id,
+      idempotencyKey: 'test',
+      referenceId: `${record.batchId}:${record.id}`,
+    } as any;
+
     await service.appendRollbackLedger(
       tx,
-      record,
-      new Decimal('-12.34'),
-      'rollback:101',
-      'txn-rollback-1',
+      existingLedger,
       { reason: 'manual', operator: 'ops' },
     );
 
     const rewardData = create.mock.calls[0][0].data as Record<string, unknown>;
-    const rollbackData = create.mock.calls[1][0].data as Record<string, unknown>;
 
     expect(rewardData.customerId).toBe(record.customerId);
-    expect(rollbackData.customerId).toBe(record.customerId);
     expect(rewardData.userId).toBeUndefined();
-    expect(rollbackData.userId).toBeUndefined();
+
+    expect(update).toHaveBeenCalledWith({
+      where: { id: existingLedger.id },
+      data: {
+        type: 'ROLLBACK',
+        metadata: { reason: 'manual', operator: 'ops' },
+      },
+    });
   });
 });

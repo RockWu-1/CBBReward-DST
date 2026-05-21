@@ -30,9 +30,6 @@ export class AdminActionsService {
   }
 
   async retryRecord(recordId: number): Promise<AdminActionResult> {
-    if (this.isMockMode()) {
-      return this.mockResult('record.retry', { recordId });
-    }
     await this.rewardService.retryRecord(recordId);
     return { success: true, mode: 'live', message: 'Record retry executed' };
   }
@@ -42,9 +39,6 @@ export class AdminActionsService {
     reason: string,
     operator: string,
   ): Promise<AdminActionResult> {
-    if (this.isMockMode()) {
-      return this.mockResult('record.rollback', { recordId, reason, operator });
-    }
     await this.rewardService.rollbackRecord(recordId, reason, operator);
     return { success: true, mode: 'live', message: 'Record rollback executed' };
   }
