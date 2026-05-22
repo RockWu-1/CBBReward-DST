@@ -23,6 +23,7 @@ export class AdminAuthService {
       return null;
     }
 
+    //TODO recover after test
     // const passwordMatched = await bcrypt.compare(password, admin.passwordHash);
     // if (!passwordMatched) {
     //   return null;

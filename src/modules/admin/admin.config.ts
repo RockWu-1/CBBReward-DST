@@ -22,6 +22,9 @@ const parsePayload = (request: any) => request?.payload ?? {};
 const parseStatus = (context: any): string => String(context?.record?.params?.status ?? '').toUpperCase();
 const canRetryRecord = (status: string): boolean => ['PENDING', 'FAILED'].includes(status);
 const canRollbackRecord = (status: string): boolean => status === 'SUCCESS';
+const bcrypt = require('bcrypt') as {
+  hash: (data: string, saltOrRounds: string | number) => Promise<string>;
+};
 
 export const buildAdminOptions = async (
   configService: ConfigService,
@@ -167,32 +170,39 @@ export const buildAdminOptions = async (
               },
             },
             actions: {
-              new: { isAccessible: false },
-              createAdminUser: {
-                actionType: 'resource',
+              new: {
                 label: 'Create Admin User',
-                component: false,
                 isAccessible: ({ currentAdmin }: { currentAdmin?: { role?: string } }) =>
                   currentAdmin?.role === 'SUPER_ADMIN',
-                handler: async (request: any, _response: any, context: any) => {
+                isVisible: ({ currentAdmin }: { currentAdmin?: { role?: string } }) =>
+                  currentAdmin?.role === 'SUPER_ADMIN',
+                before: async (request: any) => {
                   if (request.method !== 'post') {
-                    return {};
+                    return request;
                   }
                   const payload = parsePayload(request);
-                  const email = typeof payload.email === 'string' ? payload.email : '';
+                  const email = typeof payload.email === 'string' ? payload.email.trim().toLowerCase() : '';
                   const password = typeof payload.password === 'string' ? payload.password : '';
                   const role = typeof payload.role === 'string' ? payload.role : 'OPERATOR';
-                  const result = await adminActionsService.createAdminUser(
-                    {
-                      id: Number(context.currentAdmin?.id ?? 0),
-                      email: String(context.currentAdmin?.email ?? ''),
-                      role: context.currentAdmin?.role as any,
-                    },
-                    { email, password, role: role as any },
-                  );
-                  return { notice: { message: result.message, type: 'success' } };
+                  if (!email) {
+                    throw new Error('Email is required');
+                  }
+                  if (!password) {
+                    throw new Error('Password is required');
+                  }
+                  const passwordHash = await bcrypt.hash(password, 10);
+                  request.payload = {
+                    ...payload,
+                    email,
+                    role,
+                    isActive: true,
+                    passwordHash,
+                  };
+                  delete request.payload.password;
+                  return request;
                 },
               },
+              edit: { isAccessible: false, isVisible: false },
             },
           },
         },

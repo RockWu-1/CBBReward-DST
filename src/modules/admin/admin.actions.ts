@@ -22,9 +22,6 @@ export class AdminActionsService {
   ) {}
 
   async retryBatch(batchId: number): Promise<AdminActionResult> {
-    if (this.isMockMode()) {
-      return this.mockResult('batch.retry', { batchId });
-    }
     await this.rewardService.retryFailedRecords(batchId);
     return { success: true, mode: 'live', message: 'Batch retry executed' };
   }
@@ -44,9 +41,6 @@ export class AdminActionsService {
   }
 
   async createAdjustment(dto: CreateAdjustmentRequestDto): Promise<AdminActionResult> {
-    if (this.isMockMode()) {
-      return this.mockResult('batch.adjustment.create', { period: dto.period });
-    }
     const batch = await this.rewardService.createAdjustmentBatch(dto);
     return { success: true, mode: 'live', message: 'Adjustment batch created', data: batch };
   }
@@ -59,13 +53,6 @@ export class AdminActionsService {
       throw new ForbiddenException('Only SUPER_ADMIN can create admin user');
     }
 
-    if (this.isMockMode()) {
-      return this.mockResult('admin-user.create', {
-        requestedBy: currentAdmin.email,
-        email: dto.email,
-        role: dto.role,
-      });
-    }
 
     const user = await this.adminUserService.createAdminUser(dto);
     return {
@@ -76,9 +63,6 @@ export class AdminActionsService {
     };
   }
 
-  private isMockMode(): boolean {
-    return this.configService.get<string>('MOCK_MODE', 'true') === 'true';
-  }
 
   private mockResult(action: string, payload: unknown): AdminActionResult {
     return {
