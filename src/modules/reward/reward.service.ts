@@ -1,5 +1,6 @@
 ﻿import { Injectable, Logger } from '@nestjs/common';
 import { Prisma, RewardBatchStatus, RewardBatchType, RewardRecordStatus } from '@prisma/client';
+import { randomInt } from 'node:crypto';
 import Decimal from 'decimal.js';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { ExternalApiError } from '../../common/errors/external-api.error';
@@ -88,12 +89,12 @@ export class RewardService {
     });
 
     for (const record of retryCandidates) {
-      await this.processOneRecord(record.id);
+      await this.processOneRecord(record.id, false);
     }
   }
 
   async retryRecord(recordId: number): Promise<void> {
-    await this.processOneRecord(recordId);
+    await this.processOneRecord(recordId, true);
   }
 
   async rollbackRecord(recordId: number, reason: string, operator: string): Promise<void> {
@@ -340,11 +341,29 @@ export class RewardService {
     // }
   }
 
-  private async processOneRecord(recordId: number): Promise<void> {
-    const record = await this.prisma.rewardRecord.findUniqueOrThrow({ where: { id: recordId } });
-    const idempotencyKey = `reward_${record.id}`; //TODO 上线时需要修改前缀
+  private generateRandomRewardIdempotencyKey(): string {
+    const alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+    let suffix = '';
 
-    const existing = await this.ledgerService.findByIdempotencyKey(idempotencyKey);
+    for (let index = 0; index < 12; index += 1) {
+      suffix += alphabet[randomInt(alphabet.length)];
+    }
+
+    return `reward_${suffix}`;
+  }
+
+  private async generateRetryRecordIdempotencyKey(): Promise<string> {
+    while (true) {
+      const candidate = this.generateRandomRewardIdempotencyKey();
+      const existing = await this.ledgerService.findByIdempotencyKey(candidate);
+      if (!existing) return candidate;
+    }
+  }
+
+  private async processOneRecord(recordId: number, ensureUnusedKey = false): Promise<void> {
+    const record = await this.prisma.rewardRecord.findUniqueOrThrow({ where: { id: recordId } });
+
+    const existing = await this.ledgerService.findByRewardRecordId(record.id);
     if (existing && !!existing.externalTxnId) {
       await this.prisma.rewardRecord.update({
         where: { id: record.id },
@@ -357,6 +376,7 @@ export class RewardService {
       });
       return;
     }
+
     if (!record.customerEmail) {
       await this.prisma.rewardRecord.update({
         where: { id: record.id },
@@ -369,6 +389,10 @@ export class RewardService {
       });
       return;
     }
+
+    const idempotencyKey = ensureUnusedKey
+      ? await this.generateRetryRecordIdempotencyKey()
+      : this.generateRandomRewardIdempotencyKey();
 
     try {
       const external = await this.beansService.grantBeans({

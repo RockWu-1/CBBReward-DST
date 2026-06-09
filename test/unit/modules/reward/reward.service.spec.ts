@@ -127,13 +127,15 @@ describe('RewardService.createOrUpdateRewardRecords', () => {
 });
 
 describe('RewardService.processOneRecord', () => {
-  it('marks record SUCCESS and skips grantBeans when idempotency key already exists', async () => {
+  it('marks record SUCCESS and skips grantBeans when a reward ledger already exists for the record', async () => {
     const findUniqueOrThrow = jest.fn().mockResolvedValue({
       id: 1,
       customerId: 1001,
       customerEmail: 'c1001@example.com',
       rewardAmount: new Decimal('12.34'),
+      totalOrderAmount: new Decimal('123.4'),
       attemptCount: 2,
+      batchId: 10,
     });
     const update = jest.fn().mockResolvedValue(undefined);
     const prisma = {
@@ -146,13 +148,14 @@ describe('RewardService.processOneRecord', () => {
     const orderService = {};
     const grantBeans = jest.fn();
     const beansService = { grantBeans };
-    const findByIdempotencyKey = jest.fn().mockResolvedValue({
+    const findByRewardRecordId = jest.fn().mockResolvedValue({
       id: 'ledger-1',
       externalTxnId: 'txn-1',
       createdAt: new Date('2026-01-02T03:04:05.000Z'),
     });
     const ledgerService = {
-      findByIdempotencyKey,
+      findByRewardRecordId,
+      findByIdempotencyKey: jest.fn(),
       appendRewardLedger: jest.fn(),
     };
     const bigcommerce = {};
@@ -167,7 +170,7 @@ describe('RewardService.processOneRecord', () => {
 
     await (service as any).processOneRecord(1);
 
-    expect(findByIdempotencyKey).toHaveBeenCalledWith('reward_1');
+    expect(findByRewardRecordId).toHaveBeenCalledWith(1);
     expect(update).toHaveBeenCalledWith({
       where: { id: 1 },
       data: {
@@ -178,6 +181,126 @@ describe('RewardService.processOneRecord', () => {
       },
     });
     expect(grantBeans).not.toHaveBeenCalled();
+  });
+
+  it('uses a random reward key format for normal processing without pre-checking key uniqueness', async () => {
+    const findUniqueOrThrow = jest.fn().mockResolvedValue({
+      id: 2,
+      customerId: 1002,
+      customerEmail: 'c1002@example.com',
+      rewardAmount: new Decimal('8.88'),
+      totalOrderAmount: new Decimal('88.8'),
+      attemptCount: 0,
+      batchId: 20,
+    });
+    const txUpdate = jest.fn().mockResolvedValue(undefined);
+    const transaction = jest.fn().mockImplementation(async (callback: any) =>
+      callback({
+        rewardRecord: { update: txUpdate },
+      }),
+    );
+    const prisma = {
+      rewardRecord: {
+        findUniqueOrThrow,
+      },
+      $transaction: transaction,
+    };
+    const orderService = {};
+    const grantBeans = jest.fn().mockResolvedValue({ transactionId: 'txn-2' });
+    const beansService = { grantBeans };
+    const appendRewardLedger = jest.fn().mockResolvedValue(undefined);
+    const ledgerService = {
+      findByRewardRecordId: jest.fn().mockResolvedValue(null),
+      findByIdempotencyKey: jest.fn(),
+      appendRewardLedger,
+    };
+    const bigcommerce = {};
+
+    const service = new RewardService(
+      prisma as unknown as PrismaService,
+      orderService as OrderService,
+      beansService as unknown as BeansService,
+      ledgerService as unknown as LedgerService,
+      bigcommerce as BigcommerceService,
+    );
+
+    await (service as any).processOneRecord(2);
+
+    const key = grantBeans.mock.calls[0][0].idempotencyKey;
+    expect(key).toMatch(/^reward_[0-9A-Za-z]{12}$/);
+    expect(ledgerService.findByIdempotencyKey).not.toHaveBeenCalled();
+    expect(appendRewardLedger).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ id: 2 }),
+      expect.anything(),
+      key,
+      'txn-2',
+    );
+  });
+
+  it('retries idempotency key generation for retryRecord until an unused key is found', async () => {
+    const findUniqueOrThrow = jest.fn().mockResolvedValue({
+      id: 3,
+      customerId: 1003,
+      customerEmail: 'c1003@example.com',
+      rewardAmount: new Decimal('9.99'),
+      totalOrderAmount: new Decimal('99.9'),
+      attemptCount: 1,
+      batchId: 30,
+    });
+    const txUpdate = jest.fn().mockResolvedValue(undefined);
+    const prisma = {
+      rewardRecord: {
+        findUniqueOrThrow,
+      },
+      $transaction: jest.fn().mockImplementation(async (callback: any) =>
+        callback({
+          rewardRecord: { update: txUpdate },
+        }),
+      ),
+    };
+    const orderService = {};
+    const grantBeans = jest.fn().mockResolvedValue({ transactionId: 'txn-3' });
+    const beansService = { grantBeans };
+    const appendRewardLedger = jest.fn().mockResolvedValue(undefined);
+    const ledgerService = {
+      findByRewardRecordId: jest.fn().mockResolvedValue(null),
+      findByIdempotencyKey: jest
+        .fn()
+        .mockResolvedValueOnce({ id: 'existing-key' })
+        .mockResolvedValueOnce(null),
+      appendRewardLedger,
+    };
+    const bigcommerce = {};
+
+    const service = new RewardService(
+      prisma as unknown as PrismaService,
+      orderService as OrderService,
+      beansService as unknown as BeansService,
+      ledgerService as unknown as LedgerService,
+      bigcommerce as BigcommerceService,
+    );
+
+    const generateSpy = jest
+      .spyOn(service as any, 'generateRandomRewardIdempotencyKey')
+      .mockReturnValueOnce('reward_AAAAAAAAAAAA')
+      .mockReturnValueOnce('reward_BBBBBBBBBBBB');
+
+    await service.retryRecord(3);
+
+    expect(generateSpy).toHaveBeenCalledTimes(2);
+    expect(ledgerService.findByIdempotencyKey).toHaveBeenNthCalledWith(1, 'reward_AAAAAAAAAAAA');
+    expect(ledgerService.findByIdempotencyKey).toHaveBeenNthCalledWith(2, 'reward_BBBBBBBBBBBB');
+    expect(grantBeans).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotencyKey: 'reward_BBBBBBBBBBBB' }),
+    );
+    expect(appendRewardLedger).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ id: 3 }),
+      expect.anything(),
+      'reward_BBBBBBBBBBBB',
+      'txn-3',
+    );
   });
 
   it('schedules nextRetryAt when grantBeans throws retryable ExternalApiError', async () => {
@@ -211,6 +334,7 @@ describe('RewardService.processOneRecord', () => {
     const beansService = { grantBeans };
     const findByIdempotencyKey = jest.fn().mockResolvedValue(null);
     const ledgerService = {
+      findByRewardRecordId: jest.fn().mockResolvedValue(null),
       findByIdempotencyKey,
       appendRewardLedger: jest.fn(),
     };
@@ -265,6 +389,7 @@ describe('RewardService.processOneRecord', () => {
     const beansService = { grantBeans };
     const findByIdempotencyKey = jest.fn().mockResolvedValue(null);
     const ledgerService = {
+      findByRewardRecordId: jest.fn().mockResolvedValue(null),
       findByIdempotencyKey,
       appendRewardLedger: jest.fn(),
     };
@@ -321,6 +446,7 @@ describe('RewardService.processOneRecord', () => {
     const beansService = { grantBeans };
     const findByIdempotencyKey = jest.fn().mockResolvedValue(null);
     const ledgerService = {
+      findByRewardRecordId: jest.fn().mockResolvedValue(null),
       findByIdempotencyKey,
       appendRewardLedger: jest.fn(),
     };
@@ -369,6 +495,7 @@ describe('RewardService.processOneRecord', () => {
     const beansService = { grantBeans };
     const findByIdempotencyKey = jest.fn().mockResolvedValue(null);
     const ledgerService = {
+      findByRewardRecordId: jest.fn().mockResolvedValue(null),
       findByIdempotencyKey,
       appendRewardLedger: jest.fn(),
     };
@@ -394,6 +521,32 @@ describe('RewardService.processOneRecord', () => {
       },
     });
     expect(grantBeans).not.toHaveBeenCalled();
+  });
+});
+
+describe('RewardService.retryFailedRecords', () => {
+  it('does not pre-check idempotency key uniqueness during batch retry processing', async () => {
+    const findMany = jest.fn().mockResolvedValue([{ id: 4 }]);
+    const processSpy = jest
+      .spyOn(RewardService.prototype as any, 'processOneRecord')
+      .mockResolvedValue(undefined);
+
+    const service = new RewardService(
+      {
+        rewardRecord: { findMany },
+      } as unknown as PrismaService,
+      {} as OrderService,
+      {} as BeansService,
+      {} as LedgerService,
+      {} as BigcommerceService,
+    );
+
+    await service.retryFailedRecords(99);
+
+    expect(findMany).toHaveBeenCalled();
+    expect(processSpy).toHaveBeenCalledWith(4, false);
+
+    processSpy.mockRestore();
   });
 });
 
