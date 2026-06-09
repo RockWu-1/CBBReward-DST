@@ -45,7 +45,7 @@ describe('Reward schema metadata', () => {
   });
 
   it('should use Int autoincrement ids for core reward tables', () => {
-    const models = ['RewardBatch', 'RewardRecord', 'BeansLedger', 'OrderSnapshot'];
+    const models = ['RewardBatch', 'RewardRecord', 'BeansLedger', 'CustomerQuarterSnapshot'];
 
     for (const modelName of models) {
       const idField = getField(modelName, 'id');
@@ -69,7 +69,13 @@ describe('Reward schema metadata', () => {
   it('should expose RewardRecord customer fields and unique key', () => {
     const rewardRecordFields = getFieldNames('RewardRecord');
     expect(rewardRecordFields).toEqual(
-      expect.arrayContaining(['customerId', 'customerName', 'customerEmail']),
+      expect.arrayContaining([
+        'customerId',
+        'customerName',
+        'customerEmail',
+        'bobReward',
+        'csReward',
+      ]),
     );
     expect(rewardRecordFields).not.toContain('userId');
 
@@ -103,10 +109,27 @@ describe('Reward schema metadata', () => {
     expect(rewardRecordIdField?.isRequired).toBe(false);
   });
 
-  it('should expose OrderSnapshot customerId as Int', () => {
-    const customerIdField = getField('OrderSnapshot', 'customerId');
+  it('should expose CustomerQuarterSnapshot fields and constraints', () => {
+    const snapshotFields = getFieldNames('CustomerQuarterSnapshot');
+    expect(snapshotFields).toEqual(
+      expect.arrayContaining([
+        'customerId',
+        'customerName',
+        'customerEmail',
+        'season',
+        'totalAmount',
+        'bobAmount',
+        'csAmount',
+        'level',
+      ]),
+    );
+
+    const customerIdField = getField('CustomerQuarterSnapshot', 'customerId');
     expect(customerIdField?.type).toBe('Int');
     expect(customerIdField?.isRequired).toBe(true);
+
+    const model = getModel('CustomerQuarterSnapshot');
+    expect(model?.uniqueFields).toContainEqual(['customerId', 'season']);
   });
 });
 

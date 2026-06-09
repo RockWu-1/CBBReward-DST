@@ -91,6 +91,17 @@ export const buildAdminOptions = async (
           resource: { model: getModelByName('RewardRecord'), client: prisma },
           options: {
             navigation: null,
+            listProperties: [
+              'id',
+              'batch',
+              'customerEmail',
+              // 'totalOrderAmount',
+              'bobReward',
+              'csReward',
+              'rewardAmount',
+              'status',
+              // 'updatedAt',
+            ],
             actions: {
               edit: {
                 isAccessible: false,
@@ -154,10 +165,26 @@ export const buildAdminOptions = async (
             },
           },
         },
-        // {
-        //   resource: { model: getModelByName('OrderSnapshot'), client: prisma },
-        //   options: { navigation: null },
-        // },
+        {
+          resource: { model: getModelByName('CustomerQuarterSnapshot'), client: prisma },
+          options: {
+            navigation: null,
+            actions: {
+              edit: { isAccessible: false, isVisible: false },
+            },
+            listProperties: [
+              // 'id',
+              'customerId',
+              'customerEmail',
+              'season',
+              'totalAmount',
+              'bobAmount',
+              'csAmount',
+              'level',
+              // 'updatedAt',
+            ],
+          },
+        },
         {
           resource: { model: getModelByName('AdminUser'), client: prisma },
           options: {

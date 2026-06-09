@@ -3,7 +3,7 @@ import { OrderService } from '../../../../src/modules/order/order.service';
 import { BigcommerceService } from '../../../../src/modules/bigcommerce/bigcommerce.service';
 
 describe('OrderService.fetchAndAggregateUserOrders', () => {
-  it('aggregates total_inc_tax by customer_id across multiple pages', async () => {
+  it('aggregates bob/cs amounts by customer_id across multiple pages', async () => {
     const listOrdersByDateRange = jest
       .fn()
       .mockResolvedValueOnce({
@@ -45,8 +45,22 @@ describe('OrderService.fetchAndAggregateUserOrders', () => {
         hasNextPage: false,
       });
 
+    const listOrderProducts = jest
+      .fn()
+      .mockResolvedValueOnce([
+        { id: 11, order_id: 1, brand: 'Back of Bottle', total_ex_tax: '6.25' },
+        { id: 12, order_id: 1, brand: 'Color Space', total_ex_tax: '4.00' },
+      ])
+      .mockResolvedValueOnce([
+        { id: 31, order_id: 3, brand: 'Back of Bottle', total_ex_tax: '20.10' },
+      ])
+      .mockResolvedValueOnce([
+        { id: 41, order_id: 4, brand: 'Color Space', total_ex_tax: '5.00' },
+      ]);
+
     const bigcommerce = {
       listOrdersByDateRange,
+      listOrderProducts,
     } as unknown as BigcommerceService;
 
     const service = new OrderService(bigcommerce);
@@ -79,10 +93,14 @@ describe('OrderService.fetchAndAggregateUserOrders', () => {
         {
           customerId: 1001,
           totalAmount: new Decimal('30.35'),
+          bobAmount: new Decimal('26.35'),
+          csAmount: new Decimal('4'),
         },
         {
           customerId: 1002,
           totalAmount: new Decimal('5'),
+          bobAmount: new Decimal('0'),
+          csAmount: new Decimal('5'),
         },
       ]),
     );
@@ -95,6 +113,7 @@ describe('OrderService.fetchAndAggregateUserOrders', () => {
     });
     const bigcommerce = {
       listOrdersByDateRange,
+      listOrderProducts: jest.fn(),
     } as unknown as BigcommerceService;
 
     const service = new OrderService(bigcommerce);

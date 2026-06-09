@@ -37,6 +37,15 @@ enum AdminRole {
   OPERATOR
 }
 
+enum PartnerTier {
+  NONE
+  COLLECTIVE
+  TOP_SHELF
+  CRAFT
+  STUDIO
+  ICON
+}
+
 model RewardBatch {
   id          Int               @id @default(autoincrement())
   period      String            @unique // e.g. 2026-Q1
@@ -64,6 +73,8 @@ model RewardRecord {
   customerName     String?
   customerEmail    String?
   totalOrderAmount Decimal            @db.Decimal(18, 2)
+  bobReward        Decimal            @default(0) @db.Decimal(18, 2)
+  csReward         Decimal            @default(0) @db.Decimal(18, 2)
   rewardAmount     Decimal            @db.Decimal(18, 2)
   status           RewardRecordStatus @default(PENDING)
   attemptCount     Int                @default(0)
@@ -101,18 +112,22 @@ model BeansLedger {
   @@index([referenceId, type])
 }
 
-model OrderSnapshot {
-  id           Int      @id @default(autoincrement())
-  batchId      String
-  externalId   String
-  customerId   Int
-  orderAmount  Decimal  @db.Decimal(18, 2)
-  orderCreated DateTime
-  rawPayload   Json
-  createdAt    DateTime @default(now())
+model CustomerQuarterSnapshot {
+  id            Int         @id @default(autoincrement())
+  customerId    Int
+  customerName  String?
+  customerEmail String?
+  season        String      // e.g. 2026-Q1
+  totalAmount   Decimal     @db.Decimal(18, 2)
+  bobAmount     Decimal     @db.Decimal(18, 2)
+  csAmount      Decimal     @db.Decimal(18, 2)
+  level         PartnerTier
+  isExistingCustomer Boolean @default(false)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
 
-  @@index([batchId, customerId])
-  @@unique([batchId, externalId])
+  @@unique([customerId, season])
+  @@index([season, level])
 }
 
 model AdminUser {

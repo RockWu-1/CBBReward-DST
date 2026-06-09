@@ -6,11 +6,11 @@ import { ExternalApiError } from '../../../../src/common/errors/external-api.err
 import { BeansService } from '../../../../src/modules/beans/beans.service';
 import { LedgerService } from '../../../../src/modules/ledger/ledger.service';
 import { BigcommerceService } from '../../../../src/modules/bigcommerce/bigcommerce.service';
+import { RewardCalculatorService } from '../../../../src/modules/reward/reward-calculator.service';
 import {
   aggregateSnapshotsByCustomer,
   OrderService,
 } from '../../../../src/modules/order/order.service';
-import { OrderSnapshot } from '../../../../src/modules/order/types/order-snapshot.type';
 import { createTestingModule } from '../../../setup/testing.module';
 
 describe('RewardService (smoke)', () => {
@@ -23,6 +23,7 @@ describe('RewardService (smoke)', () => {
         { provide: BeansService, useValue: {} },
         { provide: LedgerService, useValue: {} },
         { provide: BigcommerceService, useValue: {} },
+        { provide: RewardCalculatorService, useValue: new RewardCalculatorService() },
       ],
     });
 
@@ -34,10 +35,14 @@ describe('RewardService (smoke)', () => {
 
 describe('aggregateSnapshotsByCustomer', () => {
   it('should aggregate multiple orders for the same customer', () => {
-    const snapshots: OrderSnapshot[] = [
-      { customerId: 101, totalAmount: new Decimal('100.25') } as any,
-      { customerId: 101, totalAmount: new Decimal('50.75') } as any,
-      { customerId: 202, totalAmount: new Decimal('10.00') } as any,
+    const snapshots: Array<{
+      customerId: number;
+      bobAmount: Decimal;
+      csAmount: Decimal;
+    }> = [
+      { customerId: 101, bobAmount: new Decimal('100.25'), csAmount: new Decimal('0') } as any,
+      { customerId: 101, bobAmount: new Decimal('0'), csAmount: new Decimal('50.75') } as any,
+      { customerId: 202, bobAmount: new Decimal('10.00'), csAmount: new Decimal('0') } as any,
     ];
 
     const result = aggregateSnapshotsByCustomer(snapshots as any);
@@ -45,6 +50,8 @@ describe('aggregateSnapshotsByCustomer', () => {
     expect(result).toHaveLength(2);
     expect(result[0].customerId).toBe(101);
     expect(result[0].totalAmount.toString()).toBe('151');
+    expect(result[0].bobAmount.toString()).toBe('100.25');
+    expect(result[0].csAmount.toString()).toBe('50.75');
     expect(result[1].customerId).toBe(202);
     expect(result[1].totalAmount.toString()).toBe('10');
   });
@@ -56,6 +63,10 @@ describe('RewardService.createOrUpdateRewardRecords', () => {
     const prisma = {
       rewardRecord: {
         upsert,
+      },
+      customerQuarterSnapshot: {
+        upsert: jest.fn().mockResolvedValue(undefined),
+        findFirst: jest.fn().mockResolvedValue(null),
       },
     };
     const orderService = {};
@@ -77,8 +88,14 @@ describe('RewardService.createOrUpdateRewardRecords', () => {
 
     await (service as any).createOrUpdateRewardRecords(
       1,
-      [{ customerId: 1001, totalAmount: new Decimal('20.00') }],
-      new Decimal('0.05'),
+      '2026-Q1',
+      [{
+        customerId: 1001,
+        totalAmount: new Decimal('20.00'),
+        bobAmount: new Decimal('20.00'),
+        csAmount: new Decimal('0'),
+      }],
+      new Date('2026-03-31T23:59:59.000Z'),
     );
 
     expect(getCustomer).toHaveBeenCalledWith(1001);
@@ -88,6 +105,8 @@ describe('RewardService.createOrUpdateRewardRecords', () => {
         customerName: 'Alice',
         customerEmail: 'alice@example.com',
         totalOrderAmount: expect.anything(),
+        bobReward: expect.anything(),
+        csReward: expect.anything(),
         rewardAmount: expect.anything(),
         status: RewardRecordStatus.PENDING,
         lastError: null,
@@ -99,6 +118,8 @@ describe('RewardService.createOrUpdateRewardRecords', () => {
         customerName: 'Alice',
         customerEmail: 'alice@example.com',
         totalOrderAmount: expect.anything(),
+        bobReward: expect.anything(),
+        csReward: expect.anything(),
         rewardAmount: expect.anything(),
       },
     });
@@ -127,6 +148,7 @@ describe('RewardService.processOneRecord', () => {
     const beansService = { grantBeans };
     const findByIdempotencyKey = jest.fn().mockResolvedValue({
       id: 'ledger-1',
+      externalTxnId: 'txn-1',
       createdAt: new Date('2026-01-02T03:04:05.000Z'),
     });
     const ledgerService = {
@@ -145,7 +167,7 @@ describe('RewardService.processOneRecord', () => {
 
     await (service as any).processOneRecord(1);
 
-    expect(findByIdempotencyKey).toHaveBeenCalledWith('reward:1');
+    expect(findByIdempotencyKey).toHaveBeenCalledWith('reward_1');
     expect(update).toHaveBeenCalledWith({
       where: { id: 1 },
       data: {
@@ -376,7 +398,7 @@ describe('RewardService.processOneRecord', () => {
 });
 
 describe('RewardService.rollbackRecord', () => {
-  it('converges status and rollback audit fields when rollback idempotency key already exists', async () => {
+  it('rolls back via existing reward ledger and updates rollback audit fields', async () => {
     const findUnique = jest.fn().mockResolvedValue({
       id: 11,
       customerId: 2001,
@@ -385,23 +407,29 @@ describe('RewardService.rollbackRecord', () => {
       rewardAmount: new Decimal('15.5'),
       status: RewardRecordStatus.SUCCESS,
     });
-    const update = jest.fn().mockResolvedValue(undefined);
+    const txUpdate = jest.fn().mockResolvedValue(undefined);
+    const transaction = jest.fn().mockImplementation(async (callback: any) =>
+      callback({
+        rewardRecord: { update: txUpdate },
+      }),
+    );
     const prisma = {
       rewardRecord: {
         findUnique,
-        update,
       },
-      $transaction: jest.fn(),
+      $transaction: transaction,
     };
     const orderService = {};
-    const rollbackBeans = jest.fn();
+    const rollbackBeans = jest.fn().mockResolvedValue({ transactionId: 'rollback-txn-1' });
     const beansService = { rollbackBeans };
     const findByIdempotencyKey = jest.fn().mockResolvedValue({
       id: 'ledger-r-1',
+      externalTxnId: 'txn-r-1',
+      idempotencyKey: 'reward_11',
       createdAt: new Date('2026-02-03T04:05:06.000Z'),
     });
     const ledgerService = {
-      findByIdempotencyKey,
+      findByRewardRecordId: findByIdempotencyKey,
       appendRollbackLedger: jest.fn(),
     };
     const bigcommerce = {};
@@ -416,15 +444,16 @@ describe('RewardService.rollbackRecord', () => {
 
     await service.rollbackRecord(11, 'manual-adjustment', 'ops-user');
 
-    expect(findByIdempotencyKey).toHaveBeenCalledWith('rollback:11');
-    expect(update).toHaveBeenCalledTimes(1);
-    const payload = update.mock.calls[0][0];
+    expect(findByIdempotencyKey).toHaveBeenCalledWith(11);
+    expect(rollbackBeans).toHaveBeenCalledTimes(1);
+    expect(ledgerService.appendRollbackLedger).toHaveBeenCalledTimes(1);
+    expect(txUpdate).toHaveBeenCalledTimes(1);
+    const payload = txUpdate.mock.calls[0][0];
     expect(payload.where).toEqual({ id: 11 });
     expect(payload.data.status).toBe(RewardRecordStatus.ROLLED_BACK);
     expect(payload.data.rollbackReason).toBe('manual-adjustment');
     expect(payload.data.rollbackBy).toBe('ops-user');
     expect(payload.data.rollbackAt).toBeInstanceOf(Date);
-    expect(rollbackBeans).not.toHaveBeenCalled();
   });
 
   it('throws clear error when customerEmail is missing', async () => {
@@ -446,7 +475,7 @@ describe('RewardService.rollbackRecord', () => {
     const orderService = {};
     const beansService = { rollbackBeans: jest.fn() };
     const ledgerService = {
-      findByIdempotencyKey: jest.fn(),
+      findByRewardRecordId: jest.fn(),
       appendRollbackLedger: jest.fn(),
     };
     const bigcommerce = {};

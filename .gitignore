@@ -26,3 +26,5 @@ lerna-debug.log*
 # ai docs
 /docs/apis
 /docs/backend_designs
+
+.codegraph

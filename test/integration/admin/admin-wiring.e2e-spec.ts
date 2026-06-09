@@ -36,4 +36,23 @@ describe('Admin wiring', () => {
     const imports = Reflect.getMetadata('imports', AppModule) as unknown[];
     expect(imports).toEqual(expect.arrayContaining([AdminModule]));
   });
+
+  it('should expose CustomerQuarterSnapshot model and remove OrderSnapshot model', () => {
+    const snapshotModel = getModel('CustomerQuarterSnapshot');
+    expect(snapshotModel).toBeDefined();
+
+    const fieldNames = snapshotModel?.fields.map((field) => field.name) ?? [];
+    expect(fieldNames).toEqual(
+      expect.arrayContaining([
+        'customerId',
+        'season',
+        'totalAmount',
+        'bobAmount',
+        'csAmount',
+        'level',
+      ]),
+    );
+
+    expect(getModel('OrderSnapshot')).toBeUndefined();
+  });
 });

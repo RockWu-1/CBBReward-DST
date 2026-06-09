@@ -7,6 +7,7 @@ import { BeansService } from '../beans/beans.service';
 import { BigcommerceService } from '../bigcommerce/bigcommerce.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { OrderService } from '../order/order.service';
+import { RewardCalculatorService } from './reward-calculator.service';
 import { CreateAdjustmentRequestDto } from './dto/create-adjustment.request.dto';
 
 type QuarterPeriod = {
@@ -18,6 +19,8 @@ type QuarterPeriod = {
 type CustomerOrderAggregate = {
   customerId: number;
   totalAmount: Decimal;
+  bobAmount: Decimal;
+  csAmount: Decimal;
 };
 
 @Injectable()
@@ -30,6 +33,7 @@ export class RewardService {
     private readonly beansService: BeansService,
     private readonly ledgerService: LedgerService,
     private readonly bigcommerce: BigcommerceService,
+    private readonly rewardCalculator: RewardCalculatorService = new RewardCalculatorService(),
   ) {}
 
   async runQuarterlyReward(period: QuarterPeriod): Promise<void> {
@@ -46,12 +50,12 @@ export class RewardService {
       data: { status: RewardBatchStatus.PROCESSING, startedAt: new Date() },
     });
 
-    // const aggregates = await this.orderService.fetchAndAggregateUserOrders(
-    //   period.startDate,
-    //   period.endDate,
-    // );
-    // await this.createOrUpdateRewardRecords(batch.id, aggregates, rewardRate);
-    await this.processPendingRecords(batch.id);
+    const aggregates = await this.orderService.fetchAndAggregateUserOrders(
+      period.startDate,
+      period.endDate,
+    );
+    await this.createOrUpdateRewardRecords(batch.id, period.period, aggregates, period.endDate);
+    // await this.processPendingRecords(batch.id); //TODO for test
 
     const pendingOrFailedCount = await this.prisma.rewardRecord.count({
       where: {
@@ -244,20 +248,64 @@ export class RewardService {
 
   private async createOrUpdateRewardRecords(
     batchId: number,
+    season: string,
     aggregates: CustomerOrderAggregate[],
-    rewardRate: Decimal,
+    quarterEndDate: Date,
   ): Promise<void> {
     for (const item of aggregates) {
-      console.log("🚀 ~ RewardService ~ createOrUpdateRewardRecords ~ item:", item)
-      const rewardAmount = item.totalAmount.mul(rewardRate).toDecimalPlaces(2);
       const customer = await this.bigcommerce.getCustomer(item.customerId);
+      const level = this.rewardCalculator.resolveTier(item.totalAmount);
+      const isExistingCustomer = await this.isExistingCustomer(item.customerId, season);
+      const rates = this.rewardCalculator.resolveRates({
+        tier: level,
+        isExistingCustomer,
+        bobAmount: item.bobAmount,
+        csAmount: item.csAmount,
+        allocationDate: this.getAllocationDate(quarterEndDate),//TODO allocation date 需要修改
+      });
+      const rewards = this.rewardCalculator.calculateRewards({
+        bobAmount: item.bobAmount,
+        csAmount: item.csAmount,
+        rates,
+      });
+
+      await this.prisma.customerQuarterSnapshot.upsert({
+        where: { customerId_season: { customerId: item.customerId, season } },
+        update: {
+          customerName: customer.customerName,
+          customerEmail: customer.customerEmail,
+          totalAmount: new Prisma.Decimal(item.totalAmount.toString()),
+          bobAmount: new Prisma.Decimal(item.bobAmount.toString()),
+          csAmount: new Prisma.Decimal(item.csAmount.toString()),
+          level,
+          isExistingCustomer,
+        },
+        create: {
+          customerId: item.customerId,
+          customerName: customer.customerName,
+          customerEmail: customer.customerEmail,
+          season,
+          totalAmount: new Prisma.Decimal(item.totalAmount.toString()),
+          bobAmount: new Prisma.Decimal(item.bobAmount.toString()),
+          csAmount: new Prisma.Decimal(item.csAmount.toString()),
+          level,
+          isExistingCustomer,
+        },
+      });
+
+      if (rewards.totalReward.equals(0)) {
+        continue;
+      }
+
       await this.prisma.rewardRecord.upsert({
         where: { batchId_customerId: { batchId, customerId: item.customerId } },
         update: {
           customerName: customer.customerName,
           customerEmail: customer.customerEmail,
           totalOrderAmount: new Prisma.Decimal(item.totalAmount.toString()),
-          rewardAmount: new Prisma.Decimal(rewardAmount.toString()),
+          bobReward: new Prisma.Decimal(rewards.bobReward.toString()),
+          csReward: new Prisma.Decimal(rewards.csReward.toString()),
+          rewardAmount: new Prisma.Decimal(rewards.totalReward.toString()),
           status: RewardRecordStatus.PENDING,
           lastError: null,
           nextRetryAt: null,
@@ -268,7 +316,9 @@ export class RewardService {
           customerName: customer.customerName,
           customerEmail: customer.customerEmail,
           totalOrderAmount: new Prisma.Decimal(item.totalAmount.toString()),
-          rewardAmount: new Prisma.Decimal(rewardAmount.toString()),
+          bobReward: new Prisma.Decimal(rewards.bobReward.toString()),
+          csReward: new Prisma.Decimal(rewards.csReward.toString()),
+          rewardAmount: new Prisma.Decimal(rewards.totalReward.toString()),
         },
       });
     }
@@ -280,12 +330,14 @@ export class RewardService {
       orderBy: { createdAt: 'asc' },
       take: 2000,
     });
+    //TODO for test 
+    const record  = records[0];
+    console.log("🚀 ~ RewardService ~ processPendingRecords ~ record:", record);
+    // await this.processOneRecord(record.id);
 
     // for (const record of records) {
     //   await this.processOneRecord(record.id);
     // }
-    console.log("🚀 ~ RewardService ~ processPendingRecords ~ records[0]:", records[0])
-     await this.processOneRecord(records[0].id);
   }
 
   private async processOneRecord(recordId: number): Promise<void> {
@@ -361,5 +413,23 @@ export class RewardService {
         },
       });
     }
+  }
+
+  private async isExistingCustomer(customerId: number, season: string): Promise<boolean> {
+    const existing = await this.prisma.customerQuarterSnapshot.findFirst({
+      where: {
+        customerId,
+        season: { not: season },
+      },
+      select: { id: true },
+    });
+    return Boolean(existing);
+  }
+
+  private getAllocationDate(quarterEndDate: Date): Date {
+    const date = new Date(quarterEndDate);
+    date.setUTCDate(date.getUTCDate() + 1);
+    date.setUTCHours(0, 0, 0, 0);
+    return date;
   }
 }

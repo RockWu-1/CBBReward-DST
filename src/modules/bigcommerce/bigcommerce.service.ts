@@ -2,7 +2,7 @@ import { HttpService } from '@nestjs/axios';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { AxiosError } from 'axios';
 import { firstValueFrom } from 'rxjs';
-import { BigcommerceOrder } from './types/bigcommerce-order.type';
+import { BigcommerceOrder, BigcommerceOrderProduct } from './types/bigcommerce-order.type';
 import { ListOrdersInput } from './types/list-orders.input';
 
 type ListOrdersResult = {
@@ -109,6 +109,42 @@ export class BigcommerceService {
         customerName,
         customerEmail: customer.email ?? '',
       };
+    } catch (error: unknown) {
+      const axiosError = error as AxiosError<{ title?: string }>;
+      const status = axiosError.response?.status;
+      const title = axiosError.response?.data?.title;
+      const detail = title ?? axiosError.message ?? 'BigCommerce request failed';
+      throw new BadRequestException(
+        `BigCommerce error${status ? ` (${status})` : ''}: ${detail}`,
+      );
+    }
+  }
+
+  async listOrderProducts(orderId: number): Promise<BigcommerceOrderProduct[]> {
+    const storeHash = process.env.BIGCOMMERCE_STORE_HASH;
+    const accessToken = process.env.BIGCOMMERCE_ACCESS_TOKEN;
+
+    if (!storeHash || !accessToken) {
+      throw new BadRequestException(
+        'Missing BIGCOMMERCE_STORE_HASH or BIGCOMMERCE_ACCESS_TOKEN',
+      );
+    }
+
+    try {
+      const response = await firstValueFrom(
+        this.http.get<BigcommerceOrderProduct[]>(
+          `${this.baseUrl}/stores/${storeHash}/v2/orders/${orderId}/products`,
+          {
+            headers: {
+              'X-Auth-Token': accessToken,
+              Accept: 'application/json',
+              'Content-Type': 'application/json',
+            },
+          },
+        ),
+      );
+
+      return Array.isArray(response.data) ? response.data : [];
     } catch (error: unknown) {
       const axiosError = error as AxiosError<{ title?: string }>;
       const status = axiosError.response?.status;
