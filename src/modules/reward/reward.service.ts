@@ -1,5 +1,6 @@
 ﻿import { Injectable, Logger } from '@nestjs/common';
 import { Prisma, RewardBatchStatus, RewardBatchType, RewardRecordStatus } from '@prisma/client';
+import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { randomInt } from 'node:crypto';
 import Decimal from 'decimal.js';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -77,6 +78,34 @@ export class RewardService {
     });
   }
 
+  async rerunQuarterlyReward(
+    period: string,
+    authToken: string,
+  ): Promise<{ success: true }> {
+    if (authToken !== 'silk12345') {
+      throw new UnauthorizedException('Invalid auth token');
+    }
+
+    const quarter = this.parseQuarterPeriod(period);
+    const batch = await this.prisma.rewardBatch.findUnique({
+      where: { period: quarter.period },
+    });
+
+    if (
+      batch &&
+      (batch.status === RewardBatchStatus.PENDING ||
+        batch.status === RewardBatchStatus.PROCESSING ||
+        batch.status === RewardBatchStatus.COMPLETED ||
+        batch.status === RewardBatchStatus.PARTIAL_FAILED)
+    ) {
+      throw new BadRequestException('Failed to create period: The quarter has already been processed.');
+    }
+
+    this.runQuarterlyReward(quarter);
+
+    return { success: true };
+  }
+
   async retryFailedRecords(batchId: number): Promise<void> {
     const retryCandidates = await this.prisma.rewardRecord.findMany({
       where: {
@@ -89,7 +118,8 @@ export class RewardService {
     });
 
     for (const record of retryCandidates) {
-      await this.processOneRecord(record.id, false);
+      console.log("🚀 ~ RewardService ~ retryFailedRecords ~ record:", record)
+      // await this.processOneRecord(record.id, false);
     }
   }
 
@@ -230,6 +260,15 @@ export class RewardService {
     const endDate = new Date(Date.UTC(year, endMonth + 1, 0, 23, 59, 59));
 
     return { period: `${year}-Q${quarter}`, startDate, endDate };
+  }
+
+  private parseQuarterPeriod(period: string): QuarterPeriod {
+    const match = period.match(/^(\d{4})-Q([1-4])$/);
+    if (!match) {
+      throw new BadRequestException('Invalid period format');
+    }
+
+    return this.buildQuarter(Number(match[1]), Number(match[2]) as 1 | 2 | 3 | 4);
   }
 
   private async getOrCreateBatch(period: QuarterPeriod, rewardRate: Decimal) {

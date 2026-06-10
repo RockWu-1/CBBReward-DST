@@ -1,5 +1,5 @@
 import Decimal from 'decimal.js';
-import { RewardBatchType, RewardRecordStatus } from '@prisma/client';
+import { RewardBatchStatus, RewardBatchType, RewardRecordStatus } from '@prisma/client';
 import { RewardService } from '../../../../src/modules/reward/reward.service';
 import { PrismaService } from '../../../../src/common/prisma/prisma.service';
 import { ExternalApiError } from '../../../../src/common/errors/external-api.error';
@@ -646,6 +646,95 @@ describe('RewardService.rollbackRecord', () => {
     );
     expect(beansService.rollbackBeans).not.toHaveBeenCalled();
   });
+});
+
+describe('RewardService.rerunQuarterlyReward', () => {
+  const createService = (status?: RewardBatchStatus | null) => {
+    const findUnique = jest.fn().mockResolvedValue(
+      status
+        ? {
+            id: 1,
+            period: '2026-Q3',
+            status,
+            startDate: new Date('2026-07-01T00:00:00.000Z'),
+            endDate: new Date('2026-09-30T23:59:59.000Z'),
+          }
+        : null,
+    );
+    const prisma = {
+      rewardBatch: {
+        findUnique,
+      },
+    };
+    const service = new RewardService(
+      prisma as unknown as PrismaService,
+      {} as OrderService,
+      {} as BeansService,
+      {} as LedgerService,
+      {} as BigcommerceService,
+    ) as RewardService & {
+      rerunQuarterlyReward(
+        period: string,
+        authToken: string,
+      ): Promise<{ success: true }>;
+    };
+
+    return { service, findUnique };
+  };
+
+  it('rejects rerun when auth token is not exact', async () => {
+    const { service, findUnique } = createService();
+
+    await expect(service.rerunQuarterlyReward('2026-Q3', ' silk12345 ')).rejects.toThrow(
+      'Invalid auth token',
+    );
+    expect(findUnique).not.toHaveBeenCalled();
+  });
+
+  it('rejects rerun when period is not in YYYY-Q[1-4] format', async () => {
+    const { service, findUnique } = createService();
+
+    await expect(service.rerunQuarterlyReward('2026-Q5', 'silk12345')).rejects.toThrow(
+      'Invalid period format',
+    );
+    expect(findUnique).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    RewardBatchStatus.PENDING,
+    RewardBatchStatus.PROCESSING,
+    RewardBatchStatus.COMPLETED,
+    RewardBatchStatus.PARTIAL_FAILED,
+  ])(
+    'rejects rerun when existing batch status is %s',
+    async (status) => {
+      const { service, findUnique } = createService(status);
+
+      await expect(service.rerunQuarterlyReward('2026-Q3', 'silk12345')).rejects.toThrow(
+        '创建period失败，季度已经跑过',
+      );
+      expect(findUnique).toHaveBeenCalledWith({ where: { period: '2026-Q3' } });
+    },
+  );
+
+  it.each([null, RewardBatchStatus.FAILED])(
+    'parses the quarter and reuses runQuarterlyReward when batch status is %s',
+    async (status) => {
+      const { service, findUnique } = createService(status);
+      const runQuarterlyReward = jest.spyOn(service, 'runQuarterlyReward').mockResolvedValue();
+
+      await expect(service.rerunQuarterlyReward('2026-Q3', 'silk12345')).resolves.toEqual({
+        success: true,
+      });
+
+      expect(findUnique).toHaveBeenCalledWith({ where: { period: '2026-Q3' } });
+      expect(runQuarterlyReward).toHaveBeenCalledWith({
+        period: '2026-Q3',
+        startDate: new Date('2026-07-01T00:00:00.000Z'),
+        endDate: new Date('2026-09-30T23:59:59.000Z'),
+      });
+    },
+  );
 });
 
 describe('RewardService.createAdjustmentBatch', () => {

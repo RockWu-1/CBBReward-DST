@@ -69,6 +69,7 @@ export const buildAdminOptions = async (
           resource: { model: getModelByName('RewardBatch'), client: prisma },
           options: {
             navigation: null,
+            titleProperty: 'period',
             actions: {
               edit: {
                 isAccessible: false,

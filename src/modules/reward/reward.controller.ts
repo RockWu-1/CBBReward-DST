@@ -1,5 +1,6 @@
 import { Body, Controller, Param, ParseIntPipe, Post } from '@nestjs/common';
 import { CreateAdjustmentRequestDto } from './dto/create-adjustment.request.dto';
+import { RerunQuarterlyRewardRequestDto } from './dto/rerun-quarterly-reward.request.dto';
 import { RollbackRecordRequestDto } from './dto/rollback-record.request.dto';
 import { RewardService } from './reward.service';
 
@@ -28,6 +29,13 @@ export class RewardController {
     @Body() body: RollbackRecordRequestDto,
   ): Promise<void> {
     await this.rewardService.rollbackRecord(recordId, body.reason, body.operator);
+  }
+
+  @Post('periods/rerun')
+  async rerunQuarterlyReward(
+    @Body() body: RerunQuarterlyRewardRequestDto,
+  ): Promise<{ success: true }> {
+    return this.rewardService.rerunQuarterlyReward(body.period, body.authToken);
   }
 
   @Post('batches/:period/adjustments')

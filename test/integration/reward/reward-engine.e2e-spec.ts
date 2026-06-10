@@ -140,6 +140,7 @@ describe('RewardController routes', () => {
     retryFailedRecords: jest.fn().mockResolvedValue(undefined),
     retryRecord: jest.fn().mockResolvedValue(undefined),
     rollbackRecord: jest.fn().mockResolvedValue(undefined),
+    rerunQuarterlyReward: jest.fn().mockResolvedValue(undefined),
     createAdjustmentBatch: jest.fn().mockResolvedValue({ id: 'batch-adjust-1' }),
   };
 
@@ -204,6 +205,37 @@ describe('RewardController routes', () => {
       'manual correction',
       'ops-user',
     );
+  });
+
+  it('POST /reward/periods/rerun should call rerunQuarterlyReward', async () => {
+    const response = await fetch(`${baseUrl}/reward/periods/rerun`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        period: '2026-Q1',
+        authToken: 'secret-token',
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(rewardService.rerunQuarterlyReward).toHaveBeenCalledWith(
+      '2026-Q1',
+      'secret-token',
+    );
+  });
+
+  it('POST /reward/periods/rerun should validate payload', async () => {
+    const response = await fetch(`${baseUrl}/reward/periods/rerun`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        period: '2026-Q5',
+        authToken: '',
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(rewardService.rerunQuarterlyReward).not.toHaveBeenCalled();
   });
 
   it('POST /reward/batches/:period/adjustments should call createAdjustmentBatch', async () => {
