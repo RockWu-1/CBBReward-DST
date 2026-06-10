@@ -649,6 +649,8 @@ describe('RewardService.rollbackRecord', () => {
 });
 
 describe('RewardService.rerunQuarterlyReward', () => {
+  const originalSchedulerTimezone = process.env.SCHEDULER_TIMEZONE;
+
   const createService = (status?: RewardBatchStatus | null) => {
     const findUnique = jest.fn().mockResolvedValue(
       status
@@ -682,6 +684,17 @@ describe('RewardService.rerunQuarterlyReward', () => {
     return { service, findUnique };
   };
 
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(Date.parse('2026-10-01T12:00:00.000Z'));
+    process.env.SCHEDULER_TIMEZONE = 'America/New_York';
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    process.env.SCHEDULER_TIMEZONE = originalSchedulerTimezone;
+  });
+
   it('rejects rerun when auth token is not exact', async () => {
     const { service, findUnique } = createService();
 
@@ -700,6 +713,16 @@ describe('RewardService.rerunQuarterlyReward', () => {
     expect(findUnique).not.toHaveBeenCalled();
   });
 
+  it('rejects rerun when the quarter has not ended in configured timezone', async () => {
+    jest.setSystemTime(Date.parse('2026-06-10T12:00:00.000Z'));
+    const { service, findUnique } = createService();
+
+    await expect(service.rerunQuarterlyReward('2026-Q2', 'silk12345')).rejects.toThrow(
+      'Cannot rerun period 2026-Q2 before quarter end in timezone America/New_York.',
+    );
+    expect(findUnique).not.toHaveBeenCalled();
+  });
+
   it.each([
     RewardBatchStatus.PENDING,
     RewardBatchStatus.PROCESSING,
@@ -711,7 +734,7 @@ describe('RewardService.rerunQuarterlyReward', () => {
       const { service, findUnique } = createService(status);
 
       await expect(service.rerunQuarterlyReward('2026-Q3', 'silk12345')).rejects.toThrow(
-        '创建period失败，季度已经跑过',
+        'Failed to create period: The quarter has already been processed.',
       );
       expect(findUnique).toHaveBeenCalledWith({ where: { period: '2026-Q3' } });
     },

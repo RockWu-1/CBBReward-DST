@@ -1,5 +1,5 @@
 import { Prisma, RewardRecord } from '@prisma/client';
-import { ValidationPipe } from '@nestjs/common';
+import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import Decimal from 'decimal.js';
@@ -236,6 +236,34 @@ describe('RewardController routes', () => {
 
     expect(response.status).toBe(400);
     expect(rewardService.rerunQuarterlyReward).not.toHaveBeenCalled();
+  });
+
+  it('POST /reward/periods/rerun should surface quarter-not-ended business validation', async () => {
+    rewardService.rerunQuarterlyReward.mockRejectedValueOnce(
+      new BadRequestException(
+        'Cannot rerun period 2026-Q2 before quarter end in timezone America/New_York.',
+      ),
+    );
+
+    const response = await fetch(`${baseUrl}/reward/periods/rerun`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        period: '2026-Q2',
+        authToken: 'secret-token',
+      }),
+    });
+
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.message).toBe(
+      'Cannot rerun period 2026-Q2 before quarter end in timezone America/New_York.',
+    );
+    expect(rewardService.rerunQuarterlyReward).toHaveBeenCalledWith(
+      '2026-Q2',
+      'secret-token',
+    );
   });
 
   it('POST /reward/batches/:period/adjustments should call createAdjustmentBatch', async () => {

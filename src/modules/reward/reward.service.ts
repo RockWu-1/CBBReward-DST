@@ -87,6 +87,7 @@ export class RewardService {
     }
 
     const quarter = this.parseQuarterPeriod(period);
+    this.assertQuarterEndedForRerun(quarter);
     const batch = await this.prisma.rewardBatch.findUnique({
       where: { period: quarter.period },
     });
@@ -269,6 +270,65 @@ export class RewardService {
     }
 
     return this.buildQuarter(Number(match[1]), Number(match[2]) as 1 | 2 | 3 | 4);
+  }
+
+  private assertQuarterEndedForRerun(quarter: QuarterPeriod): void {
+    const timeZone = process.env.SCHEDULER_TIMEZONE ?? 'Asia/Shanghai';
+    const nowInTimeZone = this.getDateTimePartsInTimeZone(new Date(), timeZone);
+    const quarterEndInTimeZone = {
+      year: quarter.endDate.getUTCFullYear(),
+      month: quarter.endDate.getUTCMonth() + 1,
+      day: quarter.endDate.getUTCDate(),
+      hour: 23,
+      minute: 59,
+      second: 59,
+    };
+
+    if (this.toComparableDateTime(nowInTimeZone) <= this.toComparableDateTime(quarterEndInTimeZone)) {
+      throw new BadRequestException(
+        `Cannot rerun period ${quarter.period} before quarter end in timezone ${timeZone}.`,
+      );
+    }
+  }
+
+  private getDateTimePartsInTimeZone(date: Date, timeZone: string) {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    });
+    const entries = formatter
+      .formatToParts(date)
+      .filter((part) => part.type !== 'literal')
+      .map((part) => [part.type, Number(part.value)] as const);
+    const values = Object.fromEntries(entries) as Record<string, number>;
+
+    return {
+      year: values.year,
+      month: values.month,
+      day: values.day,
+      hour: values.hour,
+      minute: values.minute,
+      second: values.second,
+    };
+  }
+
+  private toComparableDateTime(parts: {
+    year: number;
+    month: number;
+    day: number;
+    hour: number;
+    minute: number;
+    second: number;
+  }): number {
+    return Number(
+      `${parts.year}${String(parts.month).padStart(2, '0')}${String(parts.day).padStart(2, '0')}${String(parts.hour).padStart(2, '0')}${String(parts.minute).padStart(2, '0')}${String(parts.second).padStart(2, '0')}`,
+    );
   }
 
   private async getOrCreateBatch(period: QuarterPeriod, rewardRate: Decimal) {

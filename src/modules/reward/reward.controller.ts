@@ -38,16 +38,16 @@ export class RewardController {
     return this.rewardService.rerunQuarterlyReward(body.period, body.authToken);
   }
 
-  @Post('batches/:period/adjustments')
-  async createAdjustmentBatch(
-    @Param('period') period: string,
-    @Body() body: CreateAdjustmentPayload,
-  ) {
-    return this.rewardService.createAdjustmentBatch({
-      ...body,
-      period,
-      startDate: new Date(body.startDate),
-      endDate: new Date(body.endDate),
-    });
-  }
+  // @Post('batches/:period/adjustments')
+  // async createAdjustmentBatch(
+  //   @Param('period') period: string,
+  //   @Body() body: CreateAdjustmentPayload,
+  // ) {
+  //   return this.rewardService.createAdjustmentBatch({
+  //     ...body,
+  //     period,
+  //     startDate: new Date(body.startDate),
+  //     endDate: new Date(body.endDate),
+  //   });
+  // }
 }
