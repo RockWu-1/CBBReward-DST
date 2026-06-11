@@ -82,7 +82,7 @@ export class RewardService {
     period: string,
     authToken: string,
   ): Promise<{ success: true }> {
-    if (authToken !== 'silk12345') {
+    if (authToken !== process.env.AUTH_TOKEN) {
       throw new UnauthorizedException('Invalid auth token');
     }
 
