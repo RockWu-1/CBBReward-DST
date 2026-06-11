@@ -1,9 +1,13 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import * as path from 'path';
 import { assertRuntimeConfig } from './common/config/runtime-config.guard';
 import { setupAdminPanel } from './modules/admin/admin.bootstrap';
 import { AppModule } from './app.module';
 
+const express = require('express') as {
+  static: (root: string) => unknown;
+};
 const session = require('express-session') as (options: {
   secret: string;
   resave: boolean;
@@ -20,6 +24,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   const sessionSecret = process.env.ADMIN_SESSION_SECRET ?? 'dev-admin-session-secret';
+  app.use('/admin-assets', express.static(path.join(process.cwd(), 'public', 'admin-assets')));
   app.use(
     session({
       secret: sessionSecret,

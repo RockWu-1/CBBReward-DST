@@ -58,7 +58,27 @@ export const buildAdminOptions = async (
       rootPath: '/admin',
       branding: {
         companyName: 'CBBReward DST',
+        logo: '/admin-assets/cbb_logo.png',
         withMadeWithLove: false,
+      },
+      locale: {
+        language: 'en',
+        translations: {
+          en: {
+            components: {
+              Login: {
+                welcomeHeader: 'Welcome',
+                welcomeMessage:
+                  'CBB Reward admin portal for quarterly rewards, reruns, and rollback operations.',
+                loginButton: 'Sign in',
+                properties: {
+                  email: 'Email',
+                  password: 'Password',
+                },
+              },
+            },
+          },
+        },
       },
       componentLoader,
       dashboard: {
@@ -239,7 +259,7 @@ export const buildAdminOptions = async (
     auth: {
       authenticate: (email: string, password: string): Promise<AdminSessionUser | null> =>
         adminAuthService.authenticate(email, password) as Promise<AdminSessionUser | null>,
-      cookieName: 'adminjs',
+      cookieName: 'cbbDST',
       cookiePassword: sessionSecret,
     },
     sessionOptions: {
