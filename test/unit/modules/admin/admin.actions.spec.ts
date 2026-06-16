@@ -19,7 +19,6 @@ describe('AdminActionsService', () => {
       retryFailedRecords: jest.fn(),
       retryRecord: jest.fn(),
       rollbackRecord: jest.fn(),
-      createAdjustmentBatch: jest.fn(),
     } as unknown as jest.Mocked<RewardService>;
 
     adminUserService = {
@@ -29,17 +28,15 @@ describe('AdminActionsService', () => {
     service = new AdminActionsService(configService, rewardService, adminUserService);
   });
 
-  it('should return mock result in MOCK_MODE without calling reward service', async () => {
+  it('should execute batch retry through reward service', async () => {
     const result = await service.retryBatch(42);
 
-    expect(result).toEqual(
-      expect.objectContaining({
-        success: true,
-        mode: 'mock',
-        message: 'Mock action executed',
-      }),
-    );
-    expect(rewardService.retryFailedRecords).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      success: true,
+      mode: 'live',
+      message: 'Batch retry executed',
+    });
+    expect(rewardService.retryFailedRecords).toHaveBeenCalledWith(42);
   });
 
   it('should allow SUPER_ADMIN to create admin user and deny OPERATOR', async () => {
@@ -54,18 +51,34 @@ describe('AdminActionsService', () => {
       }),
     ).rejects.toThrow('Only SUPER_ADMIN can create admin user');
 
-    const mockCreated = await service.createAdminUser(superAdmin, {
+    adminUserService.createAdminUser.mockResolvedValue({
+      id: 5,
+      email: 'new-admin@example.com',
+      role: AdminRole.OPERATOR,
+      isActive: true,
+    } as any);
+
+    const created = await service.createAdminUser(superAdmin, {
       email: 'new-admin@example.com',
       password: 'pass123456',
       role: AdminRole.OPERATOR,
     });
 
-    expect(mockCreated).toEqual(
-      expect.objectContaining({
-        success: true,
-        mode: 'mock',
-      }),
-    );
-    expect(adminUserService.createAdminUser).not.toHaveBeenCalled();
+    expect(created).toEqual({
+      success: true,
+      mode: 'live',
+      message: 'Admin user created',
+      data: {
+        id: 5,
+        email: 'new-admin@example.com',
+        role: AdminRole.OPERATOR,
+        isActive: true,
+      },
+    });
+    expect(adminUserService.createAdminUser).toHaveBeenCalledWith({
+      email: 'new-admin@example.com',
+      password: 'pass123456',
+      role: AdminRole.OPERATOR,
+    });
   });
 });

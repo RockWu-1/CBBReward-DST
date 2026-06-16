@@ -1,7 +1,6 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AdminRole, AdminUser } from '@prisma/client';
-import { CreateAdjustmentRequestDto } from '../reward/dto/create-adjustment.request.dto';
 import { RewardService } from '../reward/reward.service';
 import { AdminUserService } from '../admin-user/admin-user.service';
 import { CreateAdminUserDto } from '../admin-user/dto/create-admin-user.dto';
@@ -38,11 +37,6 @@ export class AdminActionsService {
   ): Promise<AdminActionResult> {
     await this.rewardService.rollbackRecord(recordId, reason, operator);
     return { success: true, mode: 'live', message: 'Record rollback executed' };
-  }
-
-  async createAdjustment(dto: CreateAdjustmentRequestDto): Promise<AdminActionResult> {
-    const batch = await this.rewardService.createAdjustmentBatch(dto);
-    return { success: true, mode: 'live', message: 'Adjustment batch created', data: batch };
   }
 
   async createAdminUser(

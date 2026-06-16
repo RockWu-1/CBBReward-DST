@@ -54,6 +54,9 @@ export class BeansService {
     this.logger.warn(
       `Rollback beans user=${input.customerEmail} amount=${input.beans} reason=${input.reason}`,
     );
+    if (!this.env.isBeansRealCallEnabled()) {
+      return { transactionId: `txn_reward_${input.idempotencyKey}` };
+    }
     return this.postToBeans(
       `/v3/liana/credit/${input.externalTxnId}/cancel`,
       {},

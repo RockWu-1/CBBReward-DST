@@ -1,6 +1,11 @@
-﻿import { Injectable, Logger } from '@nestjs/common';
-import { Prisma, RewardBatchStatus, RewardBatchType, RewardRecordStatus } from '@prisma/client';
-import { BadRequestException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { Prisma, RewardBatchSource, RewardBatchStatus, RewardRecordStatus } from '@prisma/client';
 import { randomInt } from 'node:crypto';
 import Decimal from 'decimal.js';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -10,7 +15,6 @@ import { BigcommerceService } from '../bigcommerce/bigcommerce.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { OrderService } from '../order/order.service';
 import { RewardCalculatorService } from './reward-calculator.service';
-import { CreateAdjustmentRequestDto } from './dto/create-adjustment.request.dto';
 
 type QuarterPeriod = {
   period: string;
@@ -38,9 +42,11 @@ export class RewardService {
     private readonly rewardCalculator: RewardCalculatorService = new RewardCalculatorService(),
   ) {}
 
-  async runQuarterlyReward(period: QuarterPeriod): Promise<void> {
-    const rewardRate = new Decimal(process.env.REWARD_RATE ?? '0.05');
-    const batch = await this.getOrCreateBatch(period, rewardRate);
+  async runQuarterlyReward(
+    period: QuarterPeriod,
+    source: RewardBatchSource = RewardBatchSource.SCHEDULED,
+  ): Promise<void> {
+    const batch = await this.getOrCreateBatch(period, source);
 
     if (batch.status === RewardBatchStatus.COMPLETED) {
       this.logger.log(`Skip completed period=${period.period}`);
@@ -57,7 +63,7 @@ export class RewardService {
       period.endDate,
     );
     await this.createOrUpdateRewardRecords(batch.id, period.period, aggregates, period.endDate);
-    // await this.processPendingRecords(batch.id); //TODO for test
+    await this.processPendingRecords(batch.id);
 
     const pendingOrFailedCount = await this.prisma.rewardRecord.count({
       where: {
@@ -92,17 +98,48 @@ export class RewardService {
       where: { period: quarter.period },
     });
 
-    if (
-      batch &&
-      (batch.status === RewardBatchStatus.PENDING ||
-        batch.status === RewardBatchStatus.PROCESSING ||
-        batch.status === RewardBatchStatus.COMPLETED ||
-        batch.status === RewardBatchStatus.PARTIAL_FAILED)
-    ) {
-      throw new BadRequestException('Failed to create period: The quarter has already been processed.');
+    const blockedRerunStatuses: RewardBatchStatus[] = [
+      RewardBatchStatus.PENDING,
+      RewardBatchStatus.PROCESSING,
+      RewardBatchStatus.COMPLETED,
+      RewardBatchStatus.PARTIAL_FAILED,
+    ];
+
+    if (batch && blockedRerunStatuses.includes(batch.status)) {
+      throw new BadRequestException(
+        `Cannot rerun period ${quarter.period} because batch status is ${batch.status}.`,
+      );
     }
 
-    this.runQuarterlyReward(quarter);
+    if (batch?.status === RewardBatchStatus.FAILED) {
+      const hasIssuedReward = await this.ledgerService.hasIssuedRewardForBatch(batch.id);
+      if (hasIssuedReward) {
+        throw new ConflictException(
+          `Cannot rerun period ${quarter.period} because reward beans have already been issued for this batch.`,
+        );
+      }
+
+      await this.prisma.$transaction(async (tx) => {
+        await tx.rewardBatch.update({
+          where: { id: batch.id },
+          data: {
+            source: RewardBatchSource.RERUN,
+            status: RewardBatchStatus.PENDING,
+            startedAt: null,
+            finishedAt: null,
+          },
+        });
+
+        await tx.rewardRecord.deleteMany({
+          where: {
+            batchId: batch.id,
+            status: { not: RewardRecordStatus.SUCCESS },
+          },
+        });
+      });
+    }
+
+    void this.runQuarterlyReward(quarter, RewardBatchSource.RERUN);
 
     return { success: true };
   }
@@ -149,13 +186,12 @@ export class RewardService {
       return;
     }
 
-
     const rollbackAmount = new Decimal(record.rewardAmount.toString()).mul(-1);
 
     const existing = await this.ledgerService.findByRewardRecordId(record.id);
     if (!existing || !existing.externalTxnId) throw new Error('Not found existed add credit record');
     const idempotencyKey = existing.idempotencyKey;
-    const external = await this.beansService.rollbackBeans({
+    await this.beansService.rollbackBeans({
       customerEmail: record.customerEmail,
       beans: rollbackAmount.abs().toNumber(),
       reason,
@@ -232,20 +268,6 @@ export class RewardService {
     const month = date.getMonth() + 1;
     const day = date.getDate();
     return day === 1 && [1, 4, 7, 10].includes(month);
-  }
-
-  async createAdjustmentBatch(dto: CreateAdjustmentRequestDto) {
-    return this.prisma.rewardBatch.create({
-      data: {
-        period: dto.period,
-        batchType: RewardBatchType.ADJUSTMENT,
-        parentPeriod: dto.parentPeriod,
-        triggeredBy: dto.triggeredBy,
-        startDate: dto.startDate,
-        endDate: dto.endDate,
-        rewardRate: new Prisma.Decimal(dto.rewardRate.toString()),
-      },
-    });
   }
 
   private buildQuarter(year: number, quarter: 1 | 2 | 3 | 4): QuarterPeriod {
@@ -331,14 +353,14 @@ export class RewardService {
     );
   }
 
-  private async getOrCreateBatch(period: QuarterPeriod, rewardRate: Decimal) {
+  private async getOrCreateBatch(period: QuarterPeriod, source: RewardBatchSource) {
     try {
       return await this.prisma.rewardBatch.create({
         data: {
           period: period.period,
           startDate: period.startDate,
           endDate: period.endDate,
-          rewardRate: new Prisma.Decimal(rewardRate.toString()),
+          source,
         },
       });
     } catch {
@@ -361,7 +383,7 @@ export class RewardService {
         isExistingCustomer,
         bobAmount: item.bobAmount,
         csAmount: item.csAmount,
-        allocationDate: this.getAllocationDate(quarterEndDate),//TODO allocation date 需要修改
+        allocationDate: this.getAllocationDate(quarterEndDate), //TODO allocation date 需要修改
       });
       const rewards = this.rewardCalculator.calculateRewards({
         bobAmount: item.bobAmount,
@@ -394,6 +416,13 @@ export class RewardService {
       });
 
       if (rewards.totalReward.equals(0)) {
+        await this.prisma.rewardRecord.deleteMany({
+          where: {
+            batchId,
+            customerId: item.customerId,
+            status: { not: RewardRecordStatus.SUCCESS },
+          },
+        });
         continue;
       }
 
@@ -430,14 +459,14 @@ export class RewardService {
       orderBy: { createdAt: 'asc' },
       take: 2000,
     });
-    //TODO for test 
-    const record  = records[0];
-    console.log("🚀 ~ RewardService ~ processPendingRecords ~ record:", record);
+    //TODO for test
+    // const record = records[0];
+    // console.log('🚀 ~ RewardService ~ processPendingRecords ~ record:', record);
     // await this.processOneRecord(record.id);
 
-    // for (const record of records) {
-    //   await this.processOneRecord(record.id);
-    // }
+    for (const record of records) {
+      await this.processOneRecord(record.id);
+    }
   }
 
   private generateRandomRewardIdempotencyKey(): string {

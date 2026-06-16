@@ -1,13 +1,7 @@
 import { Body, Controller, Param, ParseIntPipe, Post } from '@nestjs/common';
-import { CreateAdjustmentRequestDto } from './dto/create-adjustment.request.dto';
 import { RerunQuarterlyRewardRequestDto } from './dto/rerun-quarterly-reward.request.dto';
 import { RollbackRecordRequestDto } from './dto/rollback-record.request.dto';
 import { RewardService } from './reward.service';
-
-type CreateAdjustmentPayload = Omit<CreateAdjustmentRequestDto, 'period'> & {
-  startDate: Date | string;
-  endDate: Date | string;
-};
 
 @Controller('reward')
 export class RewardController {
@@ -37,17 +31,4 @@ export class RewardController {
   ): Promise<{ success: true }> {
     return this.rewardService.rerunQuarterlyReward(body.period, body.authToken);
   }
-
-  // @Post('batches/:period/adjustments')
-  // async createAdjustmentBatch(
-  //   @Param('period') period: string,
-  //   @Body() body: CreateAdjustmentPayload,
-  // ) {
-  //   return this.rewardService.createAdjustmentBatch({
-  //     ...body,
-  //     period,
-  //     startDate: new Date(body.startDate),
-  //     endDate: new Date(body.endDate),
-  //   });
-  // }
 }

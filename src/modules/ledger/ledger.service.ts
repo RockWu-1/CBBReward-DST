@@ -7,6 +7,18 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 export class LedgerService {
   constructor(private readonly prisma: PrismaService) {}
 
+  async hasIssuedRewardForBatch(batchId: number): Promise<boolean> {
+    const count = await this.prisma.beansLedger.count({
+      where: {
+        type: LedgerType.REWARD,
+        externalTxnId: { not: null },
+        rewardRecord: { batchId },
+      },
+    });
+
+    return count > 0;
+  }
+
   findByRewardRecordId(rewardRecordId: number): Promise<BeansLedger | null> {
     return this.prisma.beansLedger.findFirst({ where: { rewardRecordId } });
   }

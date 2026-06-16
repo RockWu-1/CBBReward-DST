@@ -1,5 +1,6 @@
 import Decimal from 'decimal.js';
-import { RewardBatchStatus, RewardBatchType, RewardRecordStatus } from '@prisma/client';
+import { ConflictException } from '@nestjs/common';
+import { RewardBatchSource, RewardBatchStatus, RewardRecordStatus } from '@prisma/client';
 import { RewardService } from '../../../../src/modules/reward/reward.service';
 import { PrismaService } from '../../../../src/common/prisma/prisma.service';
 import { ExternalApiError } from '../../../../src/common/errors/external-api.error';
@@ -60,9 +61,11 @@ describe('aggregateSnapshotsByCustomer', () => {
 describe('RewardService.createOrUpdateRewardRecords', () => {
   it('fetches customer profile and upserts by batchId_customerId', async () => {
     const upsert = jest.fn().mockResolvedValue(undefined);
+    const deleteMany = jest.fn().mockResolvedValue({ count: 0 });
     const prisma = {
       rewardRecord: {
         upsert,
+        deleteMany,
       },
       customerQuarterSnapshot: {
         upsert: jest.fn().mockResolvedValue(undefined),
@@ -91,8 +94,8 @@ describe('RewardService.createOrUpdateRewardRecords', () => {
       '2026-Q1',
       [{
         customerId: 1001,
-        totalAmount: new Decimal('20.00'),
-        bobAmount: new Decimal('20.00'),
+        totalAmount: new Decimal('2000.00'),
+        bobAmount: new Decimal('2000.00'),
         csAmount: new Decimal('0'),
       }],
       new Date('2026-03-31T23:59:59.000Z'),
@@ -650,8 +653,12 @@ describe('RewardService.rollbackRecord', () => {
 
 describe('RewardService.rerunQuarterlyReward', () => {
   const originalSchedulerTimezone = process.env.SCHEDULER_TIMEZONE;
+  const originalAuthToken = process.env.AUTH_TOKEN;
 
-  const createService = (status?: RewardBatchStatus | null) => {
+  const createService = (
+    status?: RewardBatchStatus | null,
+    ledgerOverrides: Record<string, unknown> = {},
+  ) => {
     const findUnique = jest.fn().mockResolvedValue(
       status
         ? {
@@ -663,16 +670,24 @@ describe('RewardService.rerunQuarterlyReward', () => {
           }
         : null,
     );
-    const prisma = {
+    const prisma: any = {
       rewardBatch: {
         findUnique,
       },
+      rewardRecord: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      $transaction: jest.fn().mockImplementation(async (callback: any) => callback(prisma)),
+    };
+    const ledgerService = {
+      hasIssuedRewardForBatch: jest.fn().mockResolvedValue(false),
+      ...ledgerOverrides,
     };
     const service = new RewardService(
       prisma as unknown as PrismaService,
       {} as OrderService,
       {} as BeansService,
-      {} as LedgerService,
+      ledgerService as unknown as LedgerService,
       {} as BigcommerceService,
     ) as RewardService & {
       rerunQuarterlyReward(
@@ -681,18 +696,55 @@ describe('RewardService.rerunQuarterlyReward', () => {
       ): Promise<{ success: true }>;
     };
 
-    return { service, findUnique };
+    return { service, findUnique, prisma, ledgerService };
   };
 
   beforeEach(() => {
     jest.useFakeTimers();
     jest.setSystemTime(Date.parse('2026-10-01T12:00:00.000Z'));
     process.env.SCHEDULER_TIMEZONE = 'America/New_York';
+    process.env.AUTH_TOKEN = 'silk12345';
   });
 
   afterEach(() => {
     jest.useRealTimers();
     process.env.SCHEDULER_TIMEZONE = originalSchedulerTimezone;
+    process.env.AUTH_TOKEN = originalAuthToken;
+  });
+
+  it('creates scheduled batches with SCHEDULED source', async () => {
+    const create = jest.fn().mockResolvedValue({
+      id: 1,
+      period: '2026-Q3',
+      source: RewardBatchSource.SCHEDULED,
+      status: RewardBatchStatus.PENDING,
+    });
+
+    const service = new RewardService(
+      { rewardBatch: { create } } as unknown as PrismaService,
+      {} as OrderService,
+      {} as BeansService,
+      {} as LedgerService,
+      {} as BigcommerceService,
+    );
+
+    await (service as any).getOrCreateBatch(
+      {
+        period: '2026-Q3',
+        startDate: new Date('2026-07-01T00:00:00.000Z'),
+        endDate: new Date('2026-09-30T23:59:59.000Z'),
+      },
+      RewardBatchSource.SCHEDULED,
+    );
+
+    expect(create).toHaveBeenCalledWith({
+      data: {
+        period: '2026-Q3',
+        startDate: new Date('2026-07-01T00:00:00.000Z'),
+        endDate: new Date('2026-09-30T23:59:59.000Z'),
+        source: RewardBatchSource.SCHEDULED,
+      },
+    });
   });
 
   it('rejects rerun when auth token is not exact', async () => {
@@ -734,75 +786,81 @@ describe('RewardService.rerunQuarterlyReward', () => {
       const { service, findUnique } = createService(status);
 
       await expect(service.rerunQuarterlyReward('2026-Q3', 'silk12345')).rejects.toThrow(
-        'Failed to create period: The quarter has already been processed.',
+        `Cannot rerun period 2026-Q3 because batch status is ${status}.`,
       );
       expect(findUnique).toHaveBeenCalledWith({ where: { period: '2026-Q3' } });
     },
   );
 
-  it.each([null, RewardBatchStatus.FAILED])(
-    'parses the quarter and reuses runQuarterlyReward when batch status is %s',
-    async (status) => {
-      const { service, findUnique } = createService(status);
-      const runQuarterlyReward = jest.spyOn(service, 'runQuarterlyReward').mockResolvedValue();
+  it('rejects rerun for a failed batch when reward beans have already been issued', async () => {
+    const { service, ledgerService } = createService(RewardBatchStatus.FAILED, {
+      hasIssuedRewardForBatch: jest.fn().mockResolvedValue(true),
+    });
 
-      await expect(service.rerunQuarterlyReward('2026-Q3', 'silk12345')).resolves.toEqual({
-        success: true,
-      });
+    await expect(service.rerunQuarterlyReward('2026-Q3', 'silk12345')).rejects.toThrow(
+      new ConflictException(
+        'Cannot rerun period 2026-Q3 because reward beans have already been issued for this batch.',
+      ),
+    );
 
-      expect(findUnique).toHaveBeenCalledWith({ where: { period: '2026-Q3' } });
-      expect(runQuarterlyReward).toHaveBeenCalledWith({
+    expect((ledgerService as any).hasIssuedRewardForBatch).toHaveBeenCalledWith(1);
+  });
+
+  it('marks a failed batch as RERUN and clears non-successful records before reprocessing', async () => {
+    const { service, findUnique, prisma, ledgerService } = createService(RewardBatchStatus.FAILED);
+    const update = jest.fn().mockResolvedValue(undefined);
+    const deleteMany = jest.fn().mockResolvedValue({ count: 2 });
+    prisma.rewardBatch = { findUnique, update };
+    prisma.rewardRecord = { deleteMany };
+
+    const runQuarterlyReward = jest.spyOn(service, 'runQuarterlyReward').mockResolvedValue();
+
+    await expect(service.rerunQuarterlyReward('2026-Q3', 'silk12345')).resolves.toEqual({
+      success: true,
+    });
+
+    expect((ledgerService as any).hasIssuedRewardForBatch).toHaveBeenCalledWith(1);
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 1 },
+      data: {
+        source: RewardBatchSource.RERUN,
+        status: RewardBatchStatus.PENDING,
+        startedAt: null,
+        finishedAt: null,
+      },
+    });
+    expect(deleteMany).toHaveBeenCalledWith({
+      where: {
+        batchId: 1,
+        status: { not: RewardRecordStatus.SUCCESS },
+      },
+    });
+    expect(runQuarterlyReward).toHaveBeenCalledWith(
+      {
         period: '2026-Q3',
         startDate: new Date('2026-07-01T00:00:00.000Z'),
         endDate: new Date('2026-09-30T23:59:59.000Z'),
-      });
-    },
-  );
-});
-
-describe('RewardService.createAdjustmentBatch', () => {
-  it('creates adjustment batch with ADJUSTMENT type and audit fields', async () => {
-    const create = jest.fn().mockResolvedValue({
-      id: 'batch-adjust-1',
-      period: '2026-Q2-ADJ-001',
-    });
-    const prisma = {
-      rewardBatch: {
-        create,
       },
-    };
-    const orderService = {};
-    const beansService = {};
-    const ledgerService = {};
-    const bigcommerce = {};
-
-    const service = new RewardService(
-      prisma as unknown as PrismaService,
-      orderService as OrderService,
-      beansService as BeansService,
-      ledgerService as LedgerService,
-      bigcommerce as BigcommerceService,
+      RewardBatchSource.RERUN,
     );
+  });
 
-    await service.createAdjustmentBatch({
-      period: '2026-Q2-ADJ-001',
-      parentPeriod: '2026-Q2',
-      triggeredBy: 'ops-user',
-      startDate: new Date('2026-07-01T00:00:00.000Z'),
-      endDate: new Date('2026-09-30T23:59:59.000Z'),
-      rewardRate: '0.050000',
+  it('parses the quarter and reuses runQuarterlyReward when batch is missing', async () => {
+    const { service, findUnique } = createService(null);
+    const runQuarterlyReward = jest.spyOn(service, 'runQuarterlyReward').mockResolvedValue();
+
+    await expect(service.rerunQuarterlyReward('2026-Q3', 'silk12345')).resolves.toEqual({
+      success: true,
     });
 
-    expect(create).toHaveBeenCalledWith({
-      data: {
-        period: '2026-Q2-ADJ-001',
-        batchType: RewardBatchType.ADJUSTMENT,
-        parentPeriod: '2026-Q2',
-        triggeredBy: 'ops-user',
+    expect(findUnique).toHaveBeenCalledWith({ where: { period: '2026-Q3' } });
+    expect(runQuarterlyReward).toHaveBeenCalledWith(
+      {
+        period: '2026-Q3',
         startDate: new Date('2026-07-01T00:00:00.000Z'),
         endDate: new Date('2026-09-30T23:59:59.000Z'),
-        rewardRate: expect.anything(),
       },
-    });
+      RewardBatchSource.RERUN,
+    );
   });
 });

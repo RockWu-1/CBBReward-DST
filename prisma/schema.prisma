@@ -22,9 +22,9 @@ enum RewardRecordStatus {
   ROLLED_BACK
 }
 
-enum RewardBatchType {
-  REGULAR
-  ADJUSTMENT
+enum RewardBatchSource {
+  SCHEDULED
+  RERUN
 }
 
 enum LedgerType {
@@ -49,13 +49,11 @@ enum PartnerTier {
 model RewardBatch {
   id          Int               @id @default(autoincrement())
   period      String            @unique // e.g. 2026-Q1
-  batchType   RewardBatchType   @default(REGULAR)
-  parentPeriod String?
+  source      RewardBatchSource @default(SCHEDULED)
   triggeredBy String?
   startDate   DateTime
   endDate     DateTime
   status      RewardBatchStatus @default(PENDING)
-  rewardRate  Decimal           @db.Decimal(8, 6)
   startedAt   DateTime?
   finishedAt  DateTime?
   createdAt   DateTime          @default(now())

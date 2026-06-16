@@ -1,5 +1,5 @@
 import { Prisma, RewardRecord } from '@prisma/client';
-import { BadRequestException, ValidationPipe } from '@nestjs/common';
+import { BadRequestException, ConflictException, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import Decimal from 'decimal.js';
@@ -21,20 +21,22 @@ describe('Reward schema metadata', () => {
   const getFieldNames = (name: string) =>
     getModel(name)?.fields.map((field) => field.name) ?? [];
 
-  it('should expose RewardBatchType enum and RewardBatch new fields', () => {
-    const rewardBatchType = Prisma.dmmf.datamodel.enums.find(
-      (schemaEnum) => schemaEnum.name === 'RewardBatchType',
+  it('should expose RewardBatchSource enum and reward batch source field', () => {
+    const rewardBatchSource = Prisma.dmmf.datamodel.enums.find(
+      (schemaEnum) => schemaEnum.name === 'RewardBatchSource',
     );
 
-    expect(rewardBatchType).toBeDefined();
-    expect(rewardBatchType?.values.map((value) => value.name)).toEqual(
-      expect.arrayContaining(['REGULAR', 'ADJUSTMENT']),
+    expect(rewardBatchSource).toBeDefined();
+    expect(rewardBatchSource?.values.map((value) => value.name)).toEqual(
+      expect.arrayContaining(['SCHEDULED', 'RERUN']),
     );
 
     const rewardBatchFields = getFieldNames('RewardBatch');
-    expect(rewardBatchFields).toEqual(
-      expect.arrayContaining(['batchType', 'parentPeriod', 'triggeredBy']),
-    );
+    expect(rewardBatchFields).toContain('source');
+    expect(rewardBatchFields).toContain('triggeredBy');
+    expect(rewardBatchFields).not.toContain('batchType');
+    expect(rewardBatchFields).not.toContain('parentPeriod');
+    expect(rewardBatchFields).not.toContain('rewardRate');
   });
 
   it('should expose RewardRecord rollback audit fields', () => {
@@ -141,7 +143,6 @@ describe('RewardController routes', () => {
     retryRecord: jest.fn().mockResolvedValue(undefined),
     rollbackRecord: jest.fn().mockResolvedValue(undefined),
     rerunQuarterlyReward: jest.fn().mockResolvedValue(undefined),
-    createAdjustmentBatch: jest.fn().mockResolvedValue({ id: 'batch-adjust-1' }),
   };
 
   beforeAll(async () => {
@@ -266,28 +267,28 @@ describe('RewardController routes', () => {
     );
   });
 
-  it('POST /reward/batches/:period/adjustments should call createAdjustmentBatch', async () => {
-    const response = await fetch(`${baseUrl}/reward/batches/2026-Q1/adjustments`, {
+  it('POST /reward/periods/rerun should surface issued-ledger conflict', async () => {
+    rewardService.rerunQuarterlyReward.mockRejectedValueOnce(
+      new ConflictException(
+        'Cannot rerun period 2026-Q2 because reward beans have already been issued for this batch.',
+      ),
+    );
+
+    const response = await fetch(`${baseUrl}/reward/periods/rerun`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        parentPeriod: '2026-Q1',
-        triggeredBy: 'ops-user',
-        startDate: '2026-01-01T00:00:00.000Z',
-        endDate: '2026-03-31T23:59:59.000Z',
-        rewardRate: '0.05',
+        period: '2026-Q2',
+        authToken: 'secret-token',
       }),
     });
 
-    expect(response.status).toBe(201);
-    expect(rewardService.createAdjustmentBatch).toHaveBeenCalledWith({
-      period: '2026-Q1',
-      parentPeriod: '2026-Q1',
-      triggeredBy: 'ops-user',
-      startDate: new Date('2026-01-01T00:00:00.000Z'),
-      endDate: new Date('2026-03-31T23:59:59.000Z'),
-      rewardRate: '0.05',
-    });
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.message).toBe(
+      'Cannot rerun period 2026-Q2 because reward beans have already been issued for this batch.',
+    );
   });
 });
 
