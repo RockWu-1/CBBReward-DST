@@ -18,6 +18,7 @@ describe('AdminActionsService', () => {
     rewardService = {
       retryFailedRecords: jest.fn(),
       retryRecord: jest.fn(),
+      retryRecords: jest.fn(),
       rollbackRecord: jest.fn(),
     } as unknown as jest.Mocked<RewardService>;
 
@@ -37,6 +38,17 @@ describe('AdminActionsService', () => {
       message: 'Batch retry executed',
     });
     expect(rewardService.retryFailedRecords).toHaveBeenCalledWith(42);
+  });
+
+  it('should schedule bulk record retry through reward service', async () => {
+    const result = await service.retryRecords([10, 20, 30]);
+
+    expect(result).toEqual({
+      success: true,
+      mode: 'live',
+      message: 'Batch record retry scheduled',
+    });
+    expect(rewardService.retryRecords).toHaveBeenCalledWith([10, 20, 30]);
   });
 
   it('should allow SUPER_ADMIN to create admin user and deny OPERATOR', async () => {

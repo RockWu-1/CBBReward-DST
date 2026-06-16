@@ -10,6 +10,28 @@ describe('admin.config RewardRecord batch display', () => {
     expect(source).toContain("'batch',");
     expect(source).not.toContain("'batch.period'");
   });
+
+  it('keeps both Retry Record and Retry All actions for reward records', () => {
+    const filePath = path.join(process.cwd(), 'src', 'modules', 'admin', 'admin.config.ts');
+    const source = fs.readFileSync(filePath, 'utf8');
+
+    expect(source).toContain('retryRecord: {');
+    expect(source).toContain("actionType: 'record'");
+    expect(source).toContain("label: 'Retry Record'");
+    expect(source).toContain('retryRecords: {');
+    expect(source).toContain("actionType: 'bulk'");
+    expect(source).toContain("label: 'Retry All'");
+    expect(source).toContain('const ids = records');
+    expect(source).toContain('adminActionsService.retryRecords(ids)');
+  });
+
+  it('makes Retry All visibility work from per-record bulkActions generation', () => {
+    const filePath = path.join(process.cwd(), 'src', 'modules', 'admin', 'admin.config.ts');
+    const source = fs.readFileSync(filePath, 'utf8');
+
+    expect(source).toContain('context.record');
+    expect(source).toContain('record?.params?.status');
+  });
 });
 
 describe('admin branding assets', () => {

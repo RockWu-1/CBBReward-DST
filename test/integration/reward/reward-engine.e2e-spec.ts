@@ -141,6 +141,7 @@ describe('RewardController routes', () => {
   const rewardService = {
     retryFailedRecords: jest.fn().mockResolvedValue(undefined),
     retryRecord: jest.fn().mockResolvedValue(undefined),
+    retryRecords: jest.fn().mockResolvedValue(undefined),
     rollbackRecord: jest.fn().mockResolvedValue(undefined),
     rerunQuarterlyReward: jest.fn().mockResolvedValue(undefined),
   };
@@ -188,6 +189,29 @@ describe('RewardController routes', () => {
 
     expect(response.status).toBe(201);
     expect(rewardService.retryRecord).toHaveBeenCalledWith(1);
+  });
+
+  it('POST /reward/records/retry should call retryRecords with ids and return accepted', async () => {
+    const response = await fetch(`${baseUrl}/reward/records/retry`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids: [1, 2, 3] }),
+    });
+
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toEqual({ accepted: true });
+    expect(rewardService.retryRecords).toHaveBeenCalledWith([1, 2, 3]);
+  });
+
+  it('POST /reward/records/retry should validate payload', async () => {
+    const response = await fetch(`${baseUrl}/reward/records/retry`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids: [] }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(rewardService.retryRecords).not.toHaveBeenCalled();
   });
 
   it('POST /reward/records/:id/rollback should be reachable and call rollbackRecord', async () => {

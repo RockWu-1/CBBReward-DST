@@ -156,13 +156,25 @@ export class RewardService {
     });
 
     for (const record of retryCandidates) {
-      console.log("🚀 ~ RewardService ~ retryFailedRecords ~ record:", record)
-      // await this.processOneRecord(record.id, false);
+      await this.processOneRecord(record.id, false);
     }
   }
 
   async retryRecord(recordId: number): Promise<void> {
     await this.processOneRecord(recordId, true);
+  }
+
+  async retryRecords(recordIds: number[]): Promise<void> {
+    const uniqueRecordIds = [...new Set(recordIds)];
+
+    for (const recordId of uniqueRecordIds) {
+      try {
+        await this.retryRecord(recordId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(`Bulk retry failed for reward record ${recordId}: ${message}`);
+      }
+    }
   }
 
   async rollbackRecord(recordId: number, reason: string, operator: string): Promise<void> {

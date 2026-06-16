@@ -553,6 +553,48 @@ describe('RewardService.retryFailedRecords', () => {
   });
 });
 
+describe('RewardService.retryRecords', () => {
+  it('deduplicates ids and retries each unique record once', async () => {
+    const service = new RewardService(
+      {} as PrismaService,
+      {} as OrderService,
+      {} as BeansService,
+      {} as LedgerService,
+      {} as BigcommerceService,
+    );
+    const retryRecordSpy = jest
+      .spyOn(service, 'retryRecord')
+      .mockResolvedValue(undefined);
+
+    await service.retryRecords([3, 3, 5, 7, 5]);
+
+    expect(retryRecordSpy).toHaveBeenCalledTimes(3);
+    expect(retryRecordSpy).toHaveBeenNthCalledWith(1, 3);
+    expect(retryRecordSpy).toHaveBeenNthCalledWith(2, 5);
+    expect(retryRecordSpy).toHaveBeenNthCalledWith(3, 7);
+  });
+
+  it('continues retrying later ids when one retryRecord call fails', async () => {
+    const service = new RewardService(
+      {} as PrismaService,
+      {} as OrderService,
+      {} as BeansService,
+      {} as LedgerService,
+      {} as BigcommerceService,
+    );
+    const retryRecordSpy = jest
+      .spyOn(service, 'retryRecord')
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined);
+
+    await expect(service.retryRecords([11, 12, 13])).resolves.toBeUndefined();
+    expect(retryRecordSpy).toHaveBeenNthCalledWith(1, 11);
+    expect(retryRecordSpy).toHaveBeenNthCalledWith(2, 12);
+    expect(retryRecordSpy).toHaveBeenNthCalledWith(3, 13);
+  });
+});
+
 describe('RewardService.rollbackRecord', () => {
   it('rolls back via existing reward ledger and updates rollback audit fields', async () => {
     const findUnique = jest.fn().mockResolvedValue({

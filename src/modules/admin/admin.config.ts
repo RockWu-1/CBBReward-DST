@@ -148,6 +148,41 @@ export const buildAdminOptions = async (
                   return { record: context.record?.toJSON(context.currentAdmin), notice: { message: result.message, type: 'success' } };
                 },
               },
+              retryRecords: {
+                actionType: 'bulk',
+                icon: 'Play',
+                label: 'Retry All',
+                guard: 'Are you sure you want to retry the selected reward records?',
+                component: false,
+                isVisible: (context: any) => {
+                  if (Array.isArray(context.records)) {
+                    return context.records.some((record: any) =>
+                      canRetryRecord(String(record?.params?.status ?? '').toUpperCase()),
+                    );
+                  }
+                  return canRetryRecord(String(context.record?.params?.status ?? '').toUpperCase());
+                },
+                isAccessible: (context: any) => {
+                  if (Array.isArray(context.records)) {
+                    return context.records.some((record: any) =>
+                      canRetryRecord(String(record?.params?.status ?? '').toUpperCase()),
+                    );
+                  }
+                  return canRetryRecord(String(context.record?.params?.status ?? '').toUpperCase());
+                },
+                handler: async (_request: any, _response: any, context: any) => {
+                  const records = Array.isArray(context.records) ? context.records : [];
+                  const ids = records
+                    .map((record: any) => Number(record?.params?.id))
+                    .filter((id: number) => Number.isInteger(id));
+
+                  const result = await adminActionsService.retryRecords(ids);
+                  return {
+                    records: records.map((record: any) => record.toJSON(context.currentAdmin)),
+                    notice: { message: result.message, type: 'success' },
+                  };
+                },
+              },
               rollbackRecord: {
                 actionType: 'record',
                 icon: 'Undo',

@@ -8,7 +8,7 @@ export class QuarterlyRewardScheduler implements OnModuleInit{
 
   constructor(private readonly rewardService: RewardService) {}
   async onModuleInit() {
-    await this.handleDailyCheck();
+    // await this.handleDailyCheck();
   }
 
   // Every day at 01:10:00 (timezone from env)
@@ -46,8 +46,8 @@ export class QuarterlyRewardScheduler implements OnModuleInit{
     // }
 
     // for (const period of deduplicatedTargets) {
-      this.logger.log(`Scheduled run for period=${currentQuarterTarget.period}`);
-      await this.rewardService.runQuarterlyReward(currentQuarterTarget);
     // }
+    this.logger.log(`Scheduled run for period=${currentQuarterTarget.period}`);
+    await this.rewardService.runQuarterlyReward(currentQuarterTarget);
   }
 }

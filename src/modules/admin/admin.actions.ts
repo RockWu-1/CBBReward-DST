@@ -30,6 +30,11 @@ export class AdminActionsService {
     return { success: true, mode: 'live', message: 'Record retry executed' };
   }
 
+  async retryRecords(recordIds: number[]): Promise<AdminActionResult> {
+    void this.rewardService.retryRecords(recordIds);
+    return { success: true, mode: 'live', message: 'Batch record retry scheduled' };
+  }
+
   async rollbackRecord(
     recordId: number,
     reason: string,
