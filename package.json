@@ -10,14 +10,15 @@
     "test:unit": "jest --config test/jest.unit.json --runInBand",
     "test:integration": "jest --config test/jest.integration.json --runInBand --passWithNoTests",
     "test:watch": "jest --watch --runInBand",
-    "start": "node dist/main",
+    "start": "node dist/src/main.js",
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main",
     "lint": "eslint \"src/**/*.ts\" --max-warnings=0",
     "prisma:generate": "prisma generate",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
-    "prisma:seed": "ts-node prisma/seed.ts"
+    "prisma:seed": "ts-node prisma/seed.ts",
+    "clean": "rm -rf dist node_modules"
   },
   "dependencies": {
     "@adminjs/express": "^6.1.0",

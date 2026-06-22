@@ -9,6 +9,7 @@ import { LedgerModule } from './modules/ledger/ledger.module';
 import { OrderModule } from './modules/order/order.module';
 import { RewardModule } from './modules/reward/reward.module';
 import { SchedulerModule } from './modules/scheduler/scheduler.module';
+import { TaskModule } from './modules/task/task.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { SchedulerModule } from './modules/scheduler/scheduler.module';
     LedgerModule,
     RewardModule,
     SchedulerModule,
+    TaskModule,
   ],
 })
 export class AppModule {}

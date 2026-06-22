@@ -1,9 +1,10 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AdminRole, AdminUser } from '@prisma/client';
+import { AdminRole, AdminUser, TaskTriggerSource, TaskType } from '@prisma/client';
 import { RewardService } from '../reward/reward.service';
 import { AdminUserService } from '../admin-user/admin-user.service';
 import { CreateAdminUserDto } from '../admin-user/dto/create-admin-user.dto';
+import { TaskService } from '../task/task.service';
 
 type AdminActionResult = {
   success: true;
@@ -18,20 +19,45 @@ export class AdminActionsService {
     private readonly configService: ConfigService,
     private readonly rewardService: RewardService,
     private readonly adminUserService: AdminUserService,
+    private readonly taskService: TaskService,
   ) {}
 
   async retryBatch(batchId: number): Promise<AdminActionResult> {
-    await this.rewardService.retryFailedRecords(batchId);
+    const task = await this.taskService.createTask({
+      taskType: TaskType.BATCH_RETRY,
+      triggerSource: TaskTriggerSource.ADMIN,
+      title: `Retry failed records for batch ${batchId}`,
+      rewardBatchId: batchId,
+      triggeredBy: 'admin',
+      requestPayload: { batchId },
+    });
+    await this.rewardService.retryFailedRecords(batchId, task.id);
     return { success: true, mode: 'live', message: 'Batch retry executed' };
   }
 
   async retryRecord(recordId: number): Promise<AdminActionResult> {
-    await this.rewardService.retryRecord(recordId);
+    const task = await this.taskService.createTask({
+      taskType: TaskType.RECORD_RETRY,
+      triggerSource: TaskTriggerSource.ADMIN,
+      title: `Retry reward record ${recordId}`,
+      rewardRecordId: recordId,
+      triggeredBy: 'admin',
+      requestPayload: { recordId },
+    });
+    await this.rewardService.retryRecord(recordId, task.id);
     return { success: true, mode: 'live', message: 'Record retry executed' };
   }
 
-  async retryRecords(recordIds: number[]): Promise<AdminActionResult> {
-    void this.rewardService.retryRecords(recordIds);
+  async retryRecords(recordIds: number[], operator = 'admin'): Promise<AdminActionResult> {
+    const task = await this.taskService.createTask({
+      taskType: TaskType.RECORD_RETRY_BULK,
+      triggerSource: TaskTriggerSource.ADMIN,
+      title: `Bulk retry for ${recordIds.length} reward records`,
+      targetIds: recordIds,
+      triggeredBy: operator,
+      requestPayload: { recordIds },
+    });
+    void this.rewardService.retryRecords(recordIds, task.id);
     return { success: true, mode: 'live', message: 'Batch record retry scheduled' };
   }
 
@@ -40,7 +66,15 @@ export class AdminActionsService {
     reason: string,
     operator: string,
   ): Promise<AdminActionResult> {
-    await this.rewardService.rollbackRecord(recordId, reason, operator);
+    const task = await this.taskService.createTask({
+      taskType: TaskType.RECORD_ROLLBACK,
+      triggerSource: TaskTriggerSource.ADMIN,
+      title: `Rollback reward record ${recordId}`,
+      rewardRecordId: recordId,
+      triggeredBy: operator,
+      requestPayload: { reason },
+    });
+    await this.rewardService.rollbackRecord(recordId, reason, operator, task.id);
     return { success: true, mode: 'live', message: 'Record rollback executed' };
   }
 

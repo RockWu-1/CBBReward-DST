@@ -8,6 +8,7 @@ import { BeansService } from '../../../../src/modules/beans/beans.service';
 import { LedgerService } from '../../../../src/modules/ledger/ledger.service';
 import { BigcommerceService } from '../../../../src/modules/bigcommerce/bigcommerce.service';
 import { RewardCalculatorService } from '../../../../src/modules/reward/reward-calculator.service';
+import { TaskService } from '../../../../src/modules/task/task.service';
 import {
   aggregateSnapshotsByCustomer,
   OrderService,
@@ -593,6 +594,40 @@ describe('RewardService.retryRecords', () => {
     expect(retryRecordSpy).toHaveBeenNthCalledWith(2, 12);
     expect(retryRecordSpy).toHaveBeenNthCalledWith(3, 13);
   });
+
+  it('marks a bulk retry task PARTIAL_FAILED when one record retry fails', async () => {
+    const taskService = {
+      markRunning: jest.fn().mockResolvedValue(undefined),
+      markPartialFailed: jest.fn().mockResolvedValue(undefined),
+      markSuccess: jest.fn().mockResolvedValue(undefined),
+      markFailed: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new RewardService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      new RewardCalculatorService(),
+      taskService as any,
+    );
+    jest
+      .spyOn(service, 'retryRecord')
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce(undefined);
+
+    await service.retryRecords([11, 12, 13], 99);
+
+    expect(taskService.markRunning).toHaveBeenCalledWith(99);
+    expect(taskService.markPartialFailed).toHaveBeenCalledWith(99, {
+      requestedCount: 3,
+      deduplicatedCount: 3,
+      successCount: 2,
+      failedCount: 1,
+      failedRecordIds: [12],
+    });
+  });
 });
 
 describe('RewardService.rollbackRecord', () => {
@@ -884,6 +919,7 @@ describe('RewardService.rerunQuarterlyReward', () => {
         endDate: new Date('2026-09-30T23:59:59.000Z'),
       },
       RewardBatchSource.RERUN,
+      undefined,
     );
   });
 
@@ -903,6 +939,7 @@ describe('RewardService.rerunQuarterlyReward', () => {
         endDate: new Date('2026-09-30T23:59:59.000Z'),
       },
       RewardBatchSource.RERUN,
+      undefined,
     );
   });
 });

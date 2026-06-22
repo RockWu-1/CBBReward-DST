@@ -1,12 +1,18 @@
-﻿import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { TaskTriggerSource, TaskType } from '@prisma/client';
 import { Cron } from '@nestjs/schedule';
 import { RewardService } from '../reward/reward.service';
+import { TaskService } from '../task/task.service';
 
 @Injectable()
-export class QuarterlyRewardScheduler implements OnModuleInit{
+export class QuarterlyRewardScheduler implements OnModuleInit {
   private readonly logger = new Logger(QuarterlyRewardScheduler.name);
 
-  constructor(private readonly rewardService: RewardService) {}
+  constructor(
+    private readonly rewardService: RewardService,
+    private readonly taskService: TaskService,
+  ) {}
+
   async onModuleInit() {
     // await this.handleDailyCheck();
   }
@@ -18,36 +24,38 @@ export class QuarterlyRewardScheduler implements OnModuleInit{
   })
   async handleDailyCheck() {
     const today = new Date();
-    console.log("🚀 ~ QuarterlyRewardScheduler ~ handleDailyCheck ~ today:", today)
     const runTargets: Array<{ period: string; startDate: Date; endDate: Date }> = [];
 
-    // Collect primary run target at quarter-start day first
-    // if (this.rewardService.isQuarterStartDay(today)) {
-    //   const currentQuarterTarget = this.rewardService.getPreviousQuarter(today);
-    //   this.logger.log(`Quarter start detected, run period=${currentQuarterTarget.period}`);
-    //   runTargets.push(currentQuarterTarget);
-    // }
-    const currentQuarterTarget = this.rewardService.getPreviousQuarter(today);
-    this.logger.log(`Quarter start detected, run period=${currentQuarterTarget.period}`);
-    runTargets.push(currentQuarterTarget);
+    if (this.rewardService.isQuarterStartDay(today)) {
+      const currentQuarterTarget = this.rewardService.getPreviousQuarter(today);
+      this.logger.log(`Quarter start detected, run period=${currentQuarterTarget.period}`);
+      runTargets.push(currentQuarterTarget);
+    }
 
-    // Merge catch-up targets, then deduplicate by period (keep first seen)
-    // const catchUpPeriods = await this.rewardService.findCatchUpPeriods(today);
-    // runTargets.push(...catchUpPeriods);
+    const catchUpPeriods = await this.rewardService.findCatchUpPeriods(today);
+    runTargets.push(...catchUpPeriods);
 
-    // const deduplicatedTargets: typeof runTargets = [];
-    // const seenPeriods = new Set<string>();
-    // for (const target of runTargets) {
-    //   if (seenPeriods.has(target.period)) {
-    //     continue;
-    //   }
-    //   seenPeriods.add(target.period);
-    //   deduplicatedTargets.push(target);
-    // }
+    const deduplicatedTargets: typeof runTargets = [];
+    const seenPeriods = new Set<string>();
+    for (const target of runTargets) {
+      if (seenPeriods.has(target.period)) {
+        continue;
+      }
+      seenPeriods.add(target.period);
+      deduplicatedTargets.push(target);
+    }
 
-    // for (const period of deduplicatedTargets) {
-    // }
-    this.logger.log(`Scheduled run for period=${currentQuarterTarget.period}`);
-    await this.rewardService.runQuarterlyReward(currentQuarterTarget);
+    for (const period of deduplicatedTargets) {
+      this.logger.log(`Scheduled run for period=${period.period}`);
+      const task = await this.taskService.createTask({
+        taskType: TaskType.PERIOD_RUN,
+        triggerSource: TaskTriggerSource.SCHEDULER,
+        title: `Scheduled period run for ${period.period}`,
+        period: period.period,
+        triggeredBy: 'scheduler',
+        requestPayload: { source: 'SCHEDULED' },
+      });
+      await this.rewardService.runQuarterlyReward(period, undefined, task.id);
+    }
   }
 }

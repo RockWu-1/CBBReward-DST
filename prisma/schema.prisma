@@ -46,6 +46,30 @@ enum PartnerTier {
   ICON
 }
 
+enum TaskType {
+  PERIOD_RUN
+  PERIOD_RERUN
+  BATCH_RETRY
+  RECORD_RETRY
+  RECORD_RETRY_BULK
+  RECORD_ROLLBACK
+}
+
+enum TaskTriggerSource {
+  SCHEDULER
+  ADMIN
+  API
+  SYSTEM
+}
+
+enum TaskStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+  PARTIAL_FAILED
+}
+
 model RewardBatch {
   id          Int               @id @default(autoincrement())
   period      String            @unique // e.g. 2026-Q1
@@ -60,6 +84,7 @@ model RewardBatch {
   updatedAt   DateTime          @updatedAt
 
   records     RewardRecord[]
+  tasks       Task[]
 
   @@index([status, createdAt])
 }
@@ -87,9 +112,40 @@ model RewardRecord {
 
   batch            RewardBatch        @relation(fields: [batchId], references: [id], onDelete: Restrict)
   ledgers          BeansLedger[]
+  tasks            Task[]
 
   @@unique([batchId, customerId])
   @@index([status, nextRetryAt])
+}
+
+model Task {
+  id             Int               @id @default(autoincrement())
+  taskType       TaskType
+  triggerSource  TaskTriggerSource
+  status         TaskStatus        @default(PENDING)
+  title          String
+  period         String?
+  rewardBatchId  Int?
+  rewardRecordId Int?
+  targetIds      Json?
+  triggeredBy    String?
+  requestPayload Json?
+  resultPayload  Json?
+  errorMessage   String?
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  rewardBatch    RewardBatch?      @relation(fields: [rewardBatchId], references: [id], onDelete: SetNull)
+  rewardRecord   RewardRecord?     @relation(fields: [rewardRecordId], references: [id], onDelete: SetNull)
+
+  @@index([taskType, createdAt])
+  @@index([status, createdAt])
+  @@index([triggerSource, createdAt])
+  @@index([period])
+  @@index([rewardBatchId])
+  @@index([rewardRecordId])
 }
 
 model BeansLedger {

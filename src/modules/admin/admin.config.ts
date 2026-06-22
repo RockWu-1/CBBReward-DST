@@ -90,6 +90,20 @@ export const buildAdminOptions = async (
           options: {
             navigation: null,
             titleProperty: 'period',
+            listProperties: [
+              'id',
+              'period',
+              'source',
+              'status',
+              'startedAt',
+              'finishedAt',
+            ],
+            filterProperties: [
+              'id',
+              'period',
+              'status',
+              'startedAt'
+            ],
             actions: {
               edit: {
                 isAccessible: false,
@@ -114,14 +128,19 @@ export const buildAdminOptions = async (
             navigation: null,
             listProperties: [
               'id',
-              'batch',
+              'customerId',
               'customerEmail',
-              // 'totalOrderAmount',
+              'batch',
               'bobReward',
               'csReward',
               'rewardAmount',
               'status',
-              // 'updatedAt',
+            ],
+            filterProperties: [
+              'id',
+              'customerEmail',
+              'status',
+              'batch'
             ],
             actions: {
               edit: {
@@ -219,6 +238,22 @@ export const buildAdminOptions = async (
                 isVisible: false,
               },
             },
+            listProperties: [
+              'id',
+              'customerId',
+              'referenceId',
+              'type',
+              'changeAmount',
+              'idempotencyKey'
+            ],
+            filterProperties: [
+              'id',
+              'customerId',
+              'referenceId',
+              'type',
+              'idempotencyKey',
+              'createdAt',
+            ],
           },
         },
         {
@@ -229,7 +264,6 @@ export const buildAdminOptions = async (
               edit: { isAccessible: false, isVisible: false },
             },
             listProperties: [
-              // 'id',
               'customerId',
               'customerEmail',
               'season',
@@ -237,7 +271,12 @@ export const buildAdminOptions = async (
               'bobAmount',
               'csAmount',
               'level',
-              // 'updatedAt',
+            ],
+            filterProperties: [
+              'customerId',
+              'customerEmail',
+              'season',
+              'level',
             ],
           },
         },
@@ -289,6 +328,55 @@ export const buildAdminOptions = async (
             },
           },
         },
+        {
+          resource: { model: getModelByName('Task'), client: prisma },
+          options: {
+            navigation: null,
+            titleProperty: 'title',
+            listProperties: [
+              'id',
+              'taskType',
+              'status',
+              'triggerSource',
+              'title',
+              'startedAt',
+              'finishedAt',
+            ],
+            showProperties: [
+              'id',
+              'taskType',
+              'status',
+              'triggerSource',
+              'title',
+              'period',
+              'rewardBatch',
+              'rewardRecord',
+              'targetIds',
+              'triggeredBy',
+              'requestPayload',
+              'resultPayload',
+              'errorMessage',
+              'createdAt',
+              'startedAt',
+              'finishedAt',
+              'updatedAt',
+            ],
+            filterProperties: [
+              'taskType',
+              'status',
+              'triggerSource',
+              'period',
+              'triggeredBy',
+              'createdAt',
+            ],
+            actions: {
+              new: { isAccessible: false, isVisible: false },
+              edit: { isAccessible: false, isVisible: false },
+              delete: { isAccessible: false, isVisible: false },
+              bulkDelete: { isAccessible: false, isVisible: false },
+            },
+          },
+        }
       ],
     },
     auth: {

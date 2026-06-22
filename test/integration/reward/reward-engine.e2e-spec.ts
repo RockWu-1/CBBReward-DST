@@ -10,6 +10,7 @@ import { LedgerService } from '../../../src/modules/ledger/ledger.service';
 import { OrderService } from '../../../src/modules/order/order.service';
 import { RewardController } from '../../../src/modules/reward/reward.controller';
 import { RewardService } from '../../../src/modules/reward/reward.service';
+import { TaskService } from '../../../src/modules/task/task.service';
 
 describe('Reward schema metadata', () => {
   const getModel = (name: string) =>
@@ -133,6 +134,52 @@ describe('Reward schema metadata', () => {
     const model = getModel('CustomerQuarterSnapshot');
     expect(model?.uniqueFields).toContainEqual(['customerId', 'season']);
   });
+
+  it('should expose Task enums and relations for operational audit records', () => {
+    const taskType = Prisma.dmmf.datamodel.enums.find((schemaEnum) => schemaEnum.name === 'TaskType');
+    const taskStatus = Prisma.dmmf.datamodel.enums.find(
+      (schemaEnum) => schemaEnum.name === 'TaskStatus',
+    );
+    const triggerSource = Prisma.dmmf.datamodel.enums.find(
+      (schemaEnum) => schemaEnum.name === 'TaskTriggerSource',
+    );
+    const taskFields = getFieldNames('Task');
+
+    expect(taskType?.values.map((value) => value.name)).toEqual(
+      expect.arrayContaining([
+        'PERIOD_RUN',
+        'PERIOD_RERUN',
+        'BATCH_RETRY',
+        'RECORD_RETRY',
+        'RECORD_RETRY_BULK',
+        'RECORD_ROLLBACK',
+      ]),
+    );
+    expect(taskStatus?.values.map((value) => value.name)).toEqual(
+      expect.arrayContaining(['PENDING', 'RUNNING', 'SUCCESS', 'FAILED', 'PARTIAL_FAILED']),
+    );
+    expect(triggerSource?.values.map((value) => value.name)).toEqual(
+      expect.arrayContaining(['SCHEDULER', 'ADMIN', 'API', 'SYSTEM']),
+    );
+    expect(taskFields).toEqual(
+      expect.arrayContaining([
+        'taskType',
+        'triggerSource',
+        'status',
+        'title',
+        'period',
+        'rewardBatchId',
+        'rewardRecordId',
+        'targetIds',
+        'triggeredBy',
+        'requestPayload',
+        'resultPayload',
+        'errorMessage',
+        'startedAt',
+        'finishedAt',
+      ]),
+    );
+  });
 });
 
 describe('RewardController routes', () => {
@@ -145,11 +192,17 @@ describe('RewardController routes', () => {
     rollbackRecord: jest.fn().mockResolvedValue(undefined),
     rerunQuarterlyReward: jest.fn().mockResolvedValue(undefined),
   };
+  const taskService = {
+    createTask: jest.fn().mockResolvedValue({ id: 91 }),
+  };
 
   beforeAll(async () => {
     const moduleRef: TestingModule = await Test.createTestingModule({
       controllers: [RewardController],
-      providers: [{ provide: RewardService, useValue: rewardService }],
+      providers: [
+        { provide: RewardService, useValue: rewardService },
+        { provide: TaskService, useValue: taskService },
+      ],
     }).compile();
 
     app = moduleRef.createNestApplication();
@@ -179,7 +232,7 @@ describe('RewardController routes', () => {
     });
 
     expect(response.status).toBe(201);
-    expect(rewardService.retryFailedRecords).toHaveBeenCalledWith(1);
+    expect(rewardService.retryFailedRecords).toHaveBeenCalledWith(1, 91);
   });
 
   it('POST /reward/records/:id/retry should call retryRecord', async () => {
@@ -188,7 +241,7 @@ describe('RewardController routes', () => {
     });
 
     expect(response.status).toBe(201);
-    expect(rewardService.retryRecord).toHaveBeenCalledWith(1);
+    expect(rewardService.retryRecord).toHaveBeenCalledWith(1, 91);
   });
 
   it('POST /reward/records/retry should call retryRecords with ids and return accepted', async () => {
@@ -200,7 +253,13 @@ describe('RewardController routes', () => {
 
     expect(response.status).toBe(202);
     await expect(response.json()).resolves.toEqual({ accepted: true });
-    expect(rewardService.retryRecords).toHaveBeenCalledWith([1, 2, 3]);
+    expect(taskService.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskType: 'RECORD_RETRY_BULK',
+        triggerSource: 'API',
+      }),
+    );
+    expect(rewardService.retryRecords).toHaveBeenCalledWith([1, 2, 3], 91);
   });
 
   it('POST /reward/records/retry should validate payload', async () => {
@@ -229,6 +288,7 @@ describe('RewardController routes', () => {
       1,
       'manual correction',
       'ops-user',
+      91,
     );
   });
 
@@ -246,6 +306,7 @@ describe('RewardController routes', () => {
     expect(rewardService.rerunQuarterlyReward).toHaveBeenCalledWith(
       '2026-Q1',
       'secret-token',
+      91,
     );
   });
 
@@ -288,6 +349,7 @@ describe('RewardController routes', () => {
     expect(rewardService.rerunQuarterlyReward).toHaveBeenCalledWith(
       '2026-Q2',
       'secret-token',
+      91,
     );
   });
 

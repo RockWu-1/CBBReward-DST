@@ -1,4 +1,5 @@
 import {
+  Optional,
   BadRequestException,
   ConflictException,
   Injectable,
@@ -14,6 +15,7 @@ import { BeansService } from '../beans/beans.service';
 import { BigcommerceService } from '../bigcommerce/bigcommerce.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { OrderService } from '../order/order.service';
+import { TaskService } from '../task/task.service';
 import { RewardCalculatorService } from './reward-calculator.service';
 
 type QuarterPeriod = {
@@ -40,16 +42,31 @@ export class RewardService {
     private readonly ledgerService: LedgerService,
     private readonly bigcommerce: BigcommerceService,
     private readonly rewardCalculator: RewardCalculatorService = new RewardCalculatorService(),
+    @Optional() private readonly taskService?: TaskService,
   ) {}
 
   async runQuarterlyReward(
     period: QuarterPeriod,
     source: RewardBatchSource = RewardBatchSource.SCHEDULED,
+    taskId?: number,
   ): Promise<void> {
+    if (taskId) {
+      await this.taskService?.markRunning(taskId);
+    }
+
     const batch = await this.getOrCreateBatch(period, source);
 
     if (batch.status === RewardBatchStatus.COMPLETED) {
       this.logger.log(`Skip completed period=${period.period}`);
+      if (taskId) {
+        await this.taskService?.markSuccess(taskId, {
+          batchId: batch.id,
+          recordCount: 0,
+          successCount: 0,
+          failedCount: 0,
+          finalBatchStatus: batch.status,
+        });
+      }
       return;
     }
 
@@ -72,79 +89,136 @@ export class RewardService {
       },
     });
 
+    const finalBatchStatus =
+      pendingOrFailedCount === 0
+        ? RewardBatchStatus.COMPLETED
+        : RewardBatchStatus.PARTIAL_FAILED;
+
     await this.prisma.rewardBatch.update({
       where: { id: batch.id },
       data: {
-        status:
-          pendingOrFailedCount === 0
-            ? RewardBatchStatus.COMPLETED
-            : RewardBatchStatus.PARTIAL_FAILED,
+        status: finalBatchStatus,
         finishedAt: new Date(),
       },
     });
+
+    if (!taskId) {
+      return;
+    }
+
+    const recordCount = await this.prisma.rewardRecord.count({
+      where: { batchId: batch.id },
+    });
+    const successCount = await this.prisma.rewardRecord.count({
+      where: { batchId: batch.id, status: RewardRecordStatus.SUCCESS },
+    });
+    const failedCount = recordCount - successCount;
+    const resultPayload = {
+      batchId: batch.id,
+      recordCount,
+      successCount,
+      failedCount,
+      finalBatchStatus,
+    };
+
+    if (failedCount > 0 && successCount > 0) {
+      await this.taskService?.markPartialFailed(taskId, resultPayload);
+      return;
+    }
+
+    if (failedCount > 0) {
+      await this.taskService?.markFailed(
+        taskId,
+        `Period run for ${period.period} failed for all records`,
+        resultPayload,
+      );
+      return;
+    }
+
+    await this.taskService?.markSuccess(taskId, resultPayload);
   }
 
   async rerunQuarterlyReward(
     period: string,
     authToken: string,
+    taskId?: number,
   ): Promise<{ success: true }> {
+    if (taskId) {
+      await this.taskService?.markRunning(taskId);
+    }
+
     if (authToken !== process.env.AUTH_TOKEN) {
+      if (taskId) {
+        await this.taskService?.markFailed(taskId, 'Invalid auth token', { period });
+      }
       throw new UnauthorizedException('Invalid auth token');
     }
 
-    const quarter = this.parseQuarterPeriod(period);
-    this.assertQuarterEndedForRerun(quarter);
-    const batch = await this.prisma.rewardBatch.findUnique({
-      where: { period: quarter.period },
-    });
+    try {
+      const quarter = this.parseQuarterPeriod(period);
+      this.assertQuarterEndedForRerun(quarter);
+      const batch = await this.prisma.rewardBatch.findUnique({
+        where: { period: quarter.period },
+      });
 
-    const blockedRerunStatuses: RewardBatchStatus[] = [
-      RewardBatchStatus.PENDING,
-      RewardBatchStatus.PROCESSING,
-      RewardBatchStatus.COMPLETED,
-      RewardBatchStatus.PARTIAL_FAILED,
-    ];
+      const blockedRerunStatuses: RewardBatchStatus[] = [
+        RewardBatchStatus.PENDING,
+        RewardBatchStatus.PROCESSING,
+        RewardBatchStatus.COMPLETED,
+        RewardBatchStatus.PARTIAL_FAILED,
+      ];
 
-    if (batch && blockedRerunStatuses.includes(batch.status)) {
-      throw new BadRequestException(
-        `Cannot rerun period ${quarter.period} because batch status is ${batch.status}.`,
-      );
-    }
-
-    if (batch?.status === RewardBatchStatus.FAILED) {
-      const hasIssuedReward = await this.ledgerService.hasIssuedRewardForBatch(batch.id);
-      if (hasIssuedReward) {
-        throw new ConflictException(
-          `Cannot rerun period ${quarter.period} because reward beans have already been issued for this batch.`,
+      if (batch && blockedRerunStatuses.includes(batch.status)) {
+        throw new BadRequestException(
+          `Cannot rerun period ${quarter.period} because batch status is ${batch.status}.`,
         );
       }
 
-      await this.prisma.$transaction(async (tx) => {
-        await tx.rewardBatch.update({
-          where: { id: batch.id },
-          data: {
-            source: RewardBatchSource.RERUN,
-            status: RewardBatchStatus.PENDING,
-            startedAt: null,
-            finishedAt: null,
-          },
-        });
+      if (batch?.status === RewardBatchStatus.FAILED) {
+        const hasIssuedReward = await this.ledgerService.hasIssuedRewardForBatch(batch.id);
+        if (hasIssuedReward) {
+          throw new ConflictException(
+            `Cannot rerun period ${quarter.period} because reward beans have already been issued for this batch.`,
+          );
+        }
 
-        await tx.rewardRecord.deleteMany({
-          where: {
-            batchId: batch.id,
-            status: { not: RewardRecordStatus.SUCCESS },
-          },
+        await this.prisma.$transaction(async (tx) => {
+          await tx.rewardBatch.update({
+            where: { id: batch.id },
+            data: {
+              source: RewardBatchSource.RERUN,
+              status: RewardBatchStatus.PENDING,
+              startedAt: null,
+              finishedAt: null,
+            },
+          });
+
+          await tx.rewardRecord.deleteMany({
+            where: {
+              batchId: batch.id,
+              status: { not: RewardRecordStatus.SUCCESS },
+            },
+          });
         });
-      });
+      }
+
+      void this.runQuarterlyReward(quarter, RewardBatchSource.RERUN, taskId);
+
+      return { success: true };
+    } catch (error) {
+      if (taskId) {
+        const message = error instanceof Error ? error.message : String(error);
+        await this.taskService?.markFailed(taskId, message, { period });
+      }
+      throw error;
     }
-
-    void this.runQuarterlyReward(quarter, RewardBatchSource.RERUN);
-
-    return { success: true };
   }
 
-  async retryFailedRecords(batchId: number): Promise<void> {
+  async retryFailedRecords(batchId: number, taskId?: number): Promise<void> {
+    if (taskId) {
+      await this.taskService?.markRunning(taskId);
+    }
+
     const retryCandidates = await this.prisma.rewardRecord.findMany({
       where: {
         batchId,
@@ -155,78 +229,200 @@ export class RewardService {
       take: 500,
     });
 
+    let successCount = 0;
+    const failedRecordIds: number[] = [];
+
     for (const record of retryCandidates) {
-      await this.processOneRecord(record.id, false);
+      try {
+        await this.processOneRecord(record.id, false);
+        successCount += 1;
+      } catch (error) {
+        failedRecordIds.push(record.id);
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(`Batch retry failed for reward record ${record.id}: ${message}`);
+      }
+    }
+
+    if (!taskId) {
+      return;
+    }
+
+    const resultPayload = {
+      candidateCount: retryCandidates.length,
+      processedCount: retryCandidates.length,
+      successCount,
+      failedCount: failedRecordIds.length,
+      failedRecordIds,
+    };
+
+    if (failedRecordIds.length > 0 && successCount > 0) {
+      await this.taskService?.markPartialFailed(taskId, resultPayload);
+      return;
+    }
+
+    if (failedRecordIds.length > 0) {
+      await this.taskService?.markFailed(
+        taskId,
+        `Failed to retry any records for batch ${batchId}`,
+        resultPayload,
+      );
+      return;
+    }
+
+    await this.taskService?.markSuccess(taskId, resultPayload);
+  }
+
+  async retryRecord(recordId: number, taskId?: number): Promise<void> {
+    if (taskId) {
+      await this.taskService?.markRunning(taskId);
+    }
+
+    try {
+      await this.processOneRecord(recordId, true);
+      if (taskId) {
+        await this.taskService?.markSuccess(taskId, {
+          finalStatus: RewardRecordStatus.SUCCESS,
+        });
+      }
+    } catch (error) {
+      if (taskId) {
+        const message = error instanceof Error ? error.message : String(error);
+        await this.taskService?.markFailed(taskId, message, { recordId });
+      }
+      throw error;
     }
   }
 
-  async retryRecord(recordId: number): Promise<void> {
-    await this.processOneRecord(recordId, true);
-  }
-
-  async retryRecords(recordIds: number[]): Promise<void> {
+  async retryRecords(recordIds: number[], taskId?: number): Promise<void> {
     const uniqueRecordIds = [...new Set(recordIds)];
+    const failedRecordIds: number[] = [];
+    let successCount = 0;
+
+    if (taskId) {
+      await this.taskService?.markRunning(taskId);
+    }
 
     for (const recordId of uniqueRecordIds) {
       try {
         await this.retryRecord(recordId);
+        successCount += 1;
       } catch (error) {
+        failedRecordIds.push(recordId);
         const message = error instanceof Error ? error.message : String(error);
         this.logger.error(`Bulk retry failed for reward record ${recordId}: ${message}`);
       }
     }
-  }
 
-  async rollbackRecord(recordId: number, reason: string, operator: string): Promise<void> {
-    const record = await this.prisma.rewardRecord.findUnique({ where: { id: recordId } });
-    if (!record) {
-      throw new Error(`Record ${recordId} not found`);
-    }
-    if (!record.customerEmail) {
-      throw new Error(`Missing customerEmail for reward record ${recordId}`);
-    }
-    if (record.status === RewardRecordStatus.ROLLED_BACK) {
-      await this.prisma.rewardRecord.update({
-        where: { id: record.id },
-        data: {
-          status: RewardRecordStatus.ROLLED_BACK,
-          rollbackReason: reason,
-          rollbackBy: operator,
-          rollbackAt: record.rollbackAt ?? new Date(),
-        },
-      });
+    if (!taskId) {
       return;
     }
 
-    const rollbackAmount = new Decimal(record.rewardAmount.toString()).mul(-1);
+    const resultPayload = {
+      requestedCount: recordIds.length,
+      deduplicatedCount: uniqueRecordIds.length,
+      successCount,
+      failedCount: failedRecordIds.length,
+      failedRecordIds,
+    };
 
-    const existing = await this.ledgerService.findByRewardRecordId(record.id);
-    if (!existing || !existing.externalTxnId) throw new Error('Not found existed add credit record');
-    const idempotencyKey = existing.idempotencyKey;
-    await this.beansService.rollbackBeans({
-      customerEmail: record.customerEmail,
-      beans: rollbackAmount.abs().toNumber(),
-      reason,
-      idempotencyKey,
-      externalTxnId: existing.externalTxnId,
-    });
+    if (failedRecordIds.length > 0 && successCount > 0) {
+      await this.taskService?.markPartialFailed(taskId, resultPayload);
+      return;
+    }
 
-    await this.prisma.$transaction(async (tx) => {
-      await this.ledgerService.appendRollbackLedger(
-        tx,
-        existing,
-        { reason, operator },
+    if (failedRecordIds.length > 0) {
+      await this.taskService?.markFailed(
+        taskId,
+        'Bulk retry failed for all requested records',
+        resultPayload,
       );
-      await tx.rewardRecord.update({
-        where: { id: record.id },
-        data: {
-          status: RewardRecordStatus.ROLLED_BACK,
-          rollbackReason: reason,
-          rollbackBy: operator,
-          rollbackAt: new Date(),
-        },
+      return;
+    }
+
+    await this.taskService?.markSuccess(taskId, resultPayload);
+  }
+
+  async rollbackRecord(
+    recordId: number,
+    reason: string,
+    operator: string,
+    taskId?: number,
+  ): Promise<void> {
+    if (taskId) {
+      await this.taskService?.markRunning(taskId);
+    }
+
+    try {
+      const record = await this.prisma.rewardRecord.findUnique({ where: { id: recordId } });
+      if (!record) {
+        throw new Error(`Record ${recordId} not found`);
+      }
+      if (!record.customerEmail) {
+        throw new Error(`Missing customerEmail for reward record ${recordId}`);
+      }
+      if (record.status === RewardRecordStatus.ROLLED_BACK) {
+        await this.prisma.rewardRecord.update({
+          where: { id: record.id },
+          data: {
+            status: RewardRecordStatus.ROLLED_BACK,
+            rollbackReason: reason,
+            rollbackBy: operator,
+            rollbackAt: record.rollbackAt ?? new Date(),
+          },
+        });
+        if (taskId) {
+          await this.taskService?.markSuccess(taskId, {
+            finalStatus: RewardRecordStatus.ROLLED_BACK,
+            ledgerUpdated: false,
+          });
+        }
+        return;
+      }
+
+      const rollbackAmount = new Decimal(record.rewardAmount.toString()).mul(-1);
+
+      const existing = await this.ledgerService.findByRewardRecordId(record.id);
+      if (!existing || !existing.externalTxnId) throw new Error('Not found existed add credit record');
+      const idempotencyKey = existing.idempotencyKey;
+      await this.beansService.rollbackBeans({
+        customerEmail: record.customerEmail,
+        beans: rollbackAmount.abs().toNumber(),
+        reason,
+        idempotencyKey,
+        externalTxnId: existing.externalTxnId,
       });
-    });
+
+      await this.prisma.$transaction(async (tx) => {
+        await this.ledgerService.appendRollbackLedger(
+          tx,
+          existing,
+          { reason, operator },
+        );
+        await tx.rewardRecord.update({
+          where: { id: record.id },
+          data: {
+            status: RewardRecordStatus.ROLLED_BACK,
+            rollbackReason: reason,
+            rollbackBy: operator,
+            rollbackAt: new Date(),
+          },
+        });
+      });
+
+      if (taskId) {
+        await this.taskService?.markSuccess(taskId, {
+          finalStatus: RewardRecordStatus.ROLLED_BACK,
+          ledgerUpdated: true,
+          externalTxnId: existing.externalTxnId,
+        });
+      }
+    } catch (error) {
+      if (taskId) {
+        const message = error instanceof Error ? error.message : String(error);
+        await this.taskService?.markFailed(taskId, message, { recordId, reason, operator });
+      }
+      throw error;
+    }
   }
 
   async findCatchUpPeriods(today: Date): Promise<QuarterPeriod[]> {

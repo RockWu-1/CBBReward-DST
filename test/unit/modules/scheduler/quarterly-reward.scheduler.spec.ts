@@ -31,13 +31,27 @@ describe('QuarterlyRewardScheduler.handleDailyCheck', () => {
         .mockResolvedValue([quarterStartTarget, catchUpOnlyTarget]),
       runQuarterlyReward: jest.fn().mockResolvedValue(undefined),
     };
+    const taskService = {
+      createTask: jest
+        .fn()
+        .mockResolvedValueOnce({ id: 501 })
+        .mockResolvedValueOnce({ id: 502 }),
+    };
 
-    const scheduler = new QuarterlyRewardScheduler(rewardService as any);
+    const scheduler = new QuarterlyRewardScheduler(rewardService as any, taskService as any);
 
     await scheduler.handleDailyCheck();
 
     expect(rewardService.runQuarterlyReward).toHaveBeenCalledTimes(2);
-    expect(rewardService.runQuarterlyReward).toHaveBeenNthCalledWith(1, quarterStartTarget);
-    expect(rewardService.runQuarterlyReward).toHaveBeenNthCalledWith(2, catchUpOnlyTarget);
+    expect(taskService.createTask).toHaveBeenNthCalledWith(1, {
+      taskType: 'PERIOD_RUN',
+      triggerSource: 'SCHEDULER',
+      title: 'Scheduled period run for 2026-Q1',
+      period: '2026-Q1',
+      triggeredBy: 'scheduler',
+      requestPayload: { source: 'SCHEDULED' },
+    });
+    expect(rewardService.runQuarterlyReward).toHaveBeenNthCalledWith(1, quarterStartTarget, undefined, 501);
+    expect(rewardService.runQuarterlyReward).toHaveBeenNthCalledWith(2, catchUpOnlyTarget, undefined, 502);
   });
 });
